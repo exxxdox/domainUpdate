@@ -1,0 +1,6 @@
+alibabacloud_alidns20150109
+alibabacloud_tea_openapi
+alibabacloud_tea_util
+alibabacloud_tea_console
+requests
+netifaces
