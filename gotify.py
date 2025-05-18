@@ -2,11 +2,14 @@ import os
 
 import requests
 
+gotify_address = os.environ.get('GOTIFY_ADDRESS')
+gotify_token = os.environ.get('GOTIFY_TOKEN')
+
 
 def send_gotify_message(title, message, **kw):
-    url = f"http://{os.environ.get('GOTIFY_ADDRESS')}/message" #
+    url = f"http://{gotify_address}/message"  #
     params = {
-        "token": os.environ.get('GOTIFY_TOKEN')
+        "token": gotify_token
     }
     data = {
         "title": title,

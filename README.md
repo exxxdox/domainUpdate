@@ -6,6 +6,9 @@
 + ALIBABA_CLOUD_IPTYPE 域名类型
 + GOTIFY_ADDRESS gotify地址:端口
 + GOTIFY_TOKEN gotify token
++ CLOUDFARE_TOKEN
++ CLOUDFARE_ZONE_ID
++ CLOUDFARE_RECORD_NAME
 
 ## 使用方式
 初始化 sh script.sh init

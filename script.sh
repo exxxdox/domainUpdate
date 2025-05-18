@@ -18,7 +18,7 @@ case "$1" in
     echo "正在运行..."
     . myenv/bin/activate
     . /etc/profile.d/custom.sh
-    python3 domain_update_linux.py
+    python3 main.py
     ;;
   *)
     echo "用法: $0 {init | update | run}"

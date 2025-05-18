@@ -1,8 +1,4 @@
-from datetime import datetime
-import requests
 import netifaces
-from alibabacloud_util.domain_analyze import DomainUpdate
-from rest.gotify import send_gotify_message
 import subprocess
 import re
 
@@ -38,24 +34,5 @@ def get_ipv6_temporary_addresses() -> str | None:
     return None
 
 
-def update_ip_job():
-    # 获取 IPv6 地址
-    ipv6_address = get_ipv6_temporary_addresses()
-    if not ipv6_address:
-        print(f"ipv6_address is None!")
-        return
-
-    print(f"Current ipv6 is {ipv6_address}")
-
-    current_domian_analyze = DomainUpdate.get_domain_record_value()
-    print(f"Current Ali record is {current_domian_analyze}")
-    if current_domian_analyze != ipv6_address:
-        DomainUpdate.update_domain_record(ipv6_address)
-        send_gotify_message(title=f"Server ip update", message=f"Record updated at {datetime.now()}")
-        print(f"Domain updated to {ipv6_address}!!!!!!!!!!")
-
-
 if __name__ == "__main__":
-    print(f"Start--------------------------")
-    update_ip_job()
-    print(f"End----------------------------")
+    print(get_ipv6_temporary_addresses())
