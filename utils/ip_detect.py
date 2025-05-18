@@ -4,7 +4,7 @@ import re
 
 
 def get_ipv6_addresses(interface) -> str | None:
-    # 调用 ip -6 addr dev xxx 获取接口的 IPv6 地址信息
+    # 调用 ip -6 addr show dev [portname] 获取接口的 IPv6 地址信息
     result = subprocess.run(['ip', '-6', 'addr', 'show', 'dev', interface], stdout=subprocess.PIPE)
     output = result.stdout.decode('utf-8')
 
