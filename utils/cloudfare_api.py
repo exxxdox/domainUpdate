@@ -31,7 +31,10 @@ def dns_record_update(record_id, zone_id, content):
         zone_id=zone_id,
         content=content,
     )
+    return  record_response
 
 
 if __name__ == '__main__':
+    print(os.environ.get("CLOUDFARE_RECORD_NAME"))
+    print(dns_records_list(os.environ.get("CLOUDFARE_ZONE_ID")))
     pass

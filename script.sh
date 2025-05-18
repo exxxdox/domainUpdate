@@ -17,7 +17,6 @@ case "$1" in
   run)
     echo "正在运行..."
     . myenv/bin/activate
-    . /etc/profile.d/custom.sh
     python3 main.py
     ;;
   *)
