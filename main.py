@@ -23,12 +23,12 @@ def update_record():
             else:
                 dns_record_update(record.id, zone_id, ipv6_address_now)
                 print("更新ip")
-                send_gotify_message(title=f"Server ip update", message=f"Record updated at {datetime.now()}")
+                # send_gotify_message(title=f"Server ip update", message=f"Record updated at {datetime.now()}")
     if not is_record_created:
         # 创建记录
         dns_record_create(zone_id, ipv6_address_now, record_name, False, "AAAA")
         print("创建ip")
-        send_gotify_message(title=f"Server ip created", message=f"Record created at {datetime.now()}")
+        # send_gotify_message(title=f"Server ip created", message=f"Record created at {datetime.now()}")
 
 
 if __name__ == "__main__":
