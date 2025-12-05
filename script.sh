@@ -12,7 +12,8 @@ case "$1" in
   update)
     echo "正在更新依赖..."
     . ${venv_name}/bin/activate
-    pip3 install -r requirement.txt
+    pip install -r requirement.txt
+    pip freeze > requirement.txt
     deactivate
     ;;
   run)

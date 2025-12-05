@@ -1,13 +1,14 @@
 import os
-from datetime import datetime
+from dotenv import load_dotenv
 
 from utils.cloudfare_api import dns_records_list, dns_record_create, dns_record_update
 from utils.gotify import send_gotify_message
 from utils.ip_detect import get_ipv6_temporary_addresses
 
+load_dotenv() # 读取当前目录下的 .env
+
 zone_id = os.environ.get('CLOUDFARE_ZONE_ID')
 record_name = os.environ.get('CLOUDFARE_RECORD_NAME')
-
 
 def update_record():
     ipv6_address_now = get_ipv6_temporary_addresses()
