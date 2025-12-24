@@ -7,22 +7,24 @@ gotify_token = os.environ.get('GOTIFY_TOKEN')
 
 
 def send_gotify_message(title, message, **kw):
-    url = f"http://{gotify_address}/message"  #
+    if gotify_address is None or gotify_token is None:
+        return
+    url = f"https://{gotify_address}/message"  #
     params = {
         "token": gotify_token
     }
     data = {
         "title": title,
         "message": message,
-        "priority": 5
+        "priority": 0
     }
     try:
         response = requests.post(url, params=params, data=data)
         if response.status_code == 200:
             pass
-            # print("响应数据:", response.json())
+            print("Gotify 响应数据:", response.json())
         else:
-            print("gotify api 请求失败，状态码:", response.status_code)
+            print("Gotify api 请求失败，状态码:", response.status_code)
     except requests.exceptions.Timeout as e:
         if isinstance(e, requests.exceptions.ConnectTimeout):
             print("连接超时!")
