@@ -22,7 +22,11 @@
   --success: #5fe0a8;
   --font-ui: "Segoe UI Variable Text", "Segoe UI", "PingFang SC",
     "Microsoft YaHei", system-ui, sans-serif;
-  --font-mono: "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas,
+  /* 读数一律优先 Nerd Font 版的 JetBrains Mono；本机没装就逐级退到系统等宽字体。
+     只用于读数（地址/时间/计数），中文正文仍走 --font-ui —— 这套等宽字体没有汉字字形，
+     整页套上去中文只会退到系统字体，变成等宽拉丁 + 比例中文的混排。 */
+  --font-mono: "JetBrainsMono Nerd Font Mono", "JetBrainsMono NFM",
+    "JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas,
     "DejaVu Sans Mono", monospace;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   color-scheme: dark;
@@ -1035,11 +1039,28 @@ td.is-succeeded::before {
   box-shadow: 0 0 10px rgba(95, 224, 168, 0.8);
 }
 
+/* 视口窄于 1700px 时浮层放不下七列的整宽展开（两列完整 IPv6 各需 ~320px）。
+   这一档让两列地址可以断行：代价是地址折成两行，换来的是任何宽度下都没有横向滚动条。 */
+@media (max-width: 1709px) {
+  .overlay-panel th:nth-child(5),
+  .overlay-panel th:nth-child(6),
+  .overlay-panel td:nth-child(5),
+  .overlay-panel td:nth-child(6) {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .overlay-panel td:last-child {
+    min-width: 12rem;
+  }
+}
+
 /* ---- 检查记录浮层 -------------------------------------------------------- */
 
 dialog {
-  /* 宽度跟视口走但封顶，高度由内容决定并留出边距，避免浮层顶到屏幕边缘。 */
-  width: min(1180px, calc(100vw - 2rem));
+  /* 宽度跟视口走但封顶：七列记录表里有两列是完整 IPv6 地址，窄了就必然横向滚动。
+     1680px 是 2K 屏上七列等宽展开所需的最小宽度，屏幕上放不下时再退回视口宽。 */
+  width: min(1680px, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
   padding: 0;
   border: 1px solid var(--line-soft);
