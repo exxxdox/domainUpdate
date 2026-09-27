@@ -5,17 +5,24 @@
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from domain_update.config import AppConfig, ConfigStore
-from domain_update.history import CheckHistoryStore, CheckRecord
+from domain_update.history import DEFAULT_MAX_RECORDS, CheckHistoryStore, CheckRecord
 from domain_update.models import DnsStatus, Result
 from domain_update.scheduler import SchedulerSnapshot
 from domain_update.service import DomainUpdateService
-from domain_update.web.api import WebApi
+from domain_update.web.api import (
+    HISTORY_MAX_PAGE_SIZE,
+    HISTORY_PAGE_SIZE,
+    HISTORY_PREVIEW_LIMIT,
+    WebApi,
+)
 
 JSON_HEADERS = {"content-type": "application/json", "host": "127.0.0.1:8501"}
 
@@ -184,6 +191,178 @@ def test_state_reports_empty_history_without_error(tmp_path: Path) -> None:
 
     assert history["summary"]["total"] == 0
     assert history["records"] == []
+
+
+# ---- 检查记录分页 -----------------------------------------------------------
+#
+# 首页只给概览，完整列表由 /api/history 分页提供。
+
+
+def seed_history(tmp_path: Path, count: int) -> None:
+    """按分钟递增写入 count 条记录，时间越晚的索引越大、排序后越靠前。"""
+    store = CheckHistoryStore(tmp_path)
+    base = datetime(2026, 9, 27, 12, 0, tzinfo=timezone.utc)
+    for index in range(count):
+        store.append(
+            CheckRecord(
+                timestamp=base + timedelta(minutes=index),
+                source="scheduled",
+                ok=True,
+                action="unchanged",
+                message=f"第{index}次",
+                ipv6="240e::1",
+            )
+        )
+
+
+def history_page(api: WebApi, query: str = "") -> Any:
+    """分页接口是 GET，没有请求体，参数走查询串。"""
+    return api.handle("GET", f"/api/history{query}")
+
+
+def test_history_page_returns_first_page_by_default(tmp_path: Path) -> None:
+    seed_history(tmp_path, 60)
+
+    response = history_page(make_api(tmp_path))
+    data = response.payload["data"]
+
+    assert response.status == 200
+    assert data["page"] == 1
+    assert data["page_size"] == HISTORY_PAGE_SIZE
+    assert data["total"] == 60
+    assert data["total_pages"] == 2
+    assert len(data["records"]) == HISTORY_PAGE_SIZE
+
+
+def test_history_page_returns_last_partial_page(tmp_path: Path) -> None:
+    seed_history(tmp_path, 60)
+
+    data = history_page(make_api(tmp_path), "?page=2").payload["data"]
+
+    assert len(data["records"]) == 10
+
+
+def test_history_page_records_are_newest_first_and_do_not_overlap(
+    tmp_path: Path,
+) -> None:
+    seed_history(tmp_path, 60)
+    api = make_api(tmp_path)
+
+    first = history_page(api, "?page=1").payload["data"]["records"]
+    second = history_page(api, "?page=2").payload["data"]["records"]
+
+    # time 是同一格式的 ISO 8601，可以直接比字符串。
+    assert first[0]["time"] > first[-1]["time"]
+    assert first[-1]["time"] > second[0]["time"]
+    assert {row["time"] for row in first}.isdisjoint({row["time"] for row in second})
+
+
+def test_history_page_clamps_page_beyond_last_page(tmp_path: Path) -> None:
+    seed_history(tmp_path, 60)
+
+    data = history_page(make_api(tmp_path), "?page=99").payload["data"]
+
+    # 夹到最后一页而不是回空表：用户停在第 N 页时，定时任务写入新记录会让内容整体后移，
+    # 空表会被误读成“历史丢了”。
+    assert data["page"] == data["total_pages"] == 2
+    assert len(data["records"]) == 10
+
+
+def test_history_page_clamps_page_size_to_maximum(tmp_path: Path) -> None:
+    seed_history(tmp_path, 3)
+
+    data = history_page(
+        make_api(tmp_path), f"?page_size={HISTORY_MAX_PAGE_SIZE + 1}"
+    ).payload["data"]
+
+    assert data["page_size"] == HISTORY_MAX_PAGE_SIZE
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "abc", ""])
+def test_history_page_falls_back_on_invalid_page_size(
+    tmp_path: Path, value: str
+) -> None:
+    """page_size 非法时必须回落到默认值，而不是让上层报 500。
+
+    这是 ZeroDivisionError 的回归锁：page_size=0 会让 total_pages 的计算除零，
+    被 handle() 的兜底捕获成“服务内部错误”，客户端拿不到任何有用信息。
+    """
+    seed_history(tmp_path, 3)
+
+    response = history_page(make_api(tmp_path), f"?page_size={value}")
+
+    assert response.status == 200
+    assert response.payload["data"]["page_size"] == HISTORY_PAGE_SIZE
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "abc"])
+def test_history_page_falls_back_on_invalid_page(tmp_path: Path, value: str) -> None:
+    seed_history(tmp_path, 3)
+
+    data = history_page(make_api(tmp_path), f"?page={value}").payload["data"]
+
+    assert data["page"] == 1
+
+
+def test_history_page_reports_total_pages_one_for_empty_store(tmp_path: Path) -> None:
+    data = history_page(make_api(tmp_path)).payload["data"]
+
+    # 空集也取 1：page 的最小值是 1，取 0 会破坏 1 <= page <= total_pages 这条不变式。
+    assert data["total"] == 0
+    assert data["total_pages"] == 1
+    assert data["records"] == []
+
+
+def test_history_page_row_shape_matches_state_preview(tmp_path: Path) -> None:
+    seed_history(tmp_path, 3)
+    api = make_api(tmp_path)
+
+    page_row = history_page(api).payload["data"]["records"][0]
+    state_row = api.handle("GET", "/api/state").payload["data"]["history"]["records"][0]
+
+    # 两个入口共用 _history_row()，列名与占位符必须完全一致。
+    assert page_row == state_row
+
+
+def test_history_page_reports_store_error_without_500(tmp_path: Path) -> None:
+    api = make_api(tmp_path)
+    failure = Result.failure("检查记录读取失败（OSError）")
+
+    with patch.object(CheckHistoryStore, "load", return_value=failure):
+        response = history_page(api)
+
+    assert response.status == 200
+    assert response.payload["data"]["records"] == []
+    assert response.payload["data"]["error"] == "检查记录读取失败（OSError）"
+
+
+def test_history_page_rejects_post(tmp_path: Path) -> None:
+    assert post(make_api(tmp_path), "/api/history").status == 405
+
+
+def test_history_page_ignores_unknown_query_params(tmp_path: Path) -> None:
+    seed_history(tmp_path, 3)
+
+    response = history_page(make_api(tmp_path), "?foo=1&page=1")
+
+    assert response.status == 200
+
+
+def test_state_history_preview_is_limited_to_preview_size(tmp_path: Path) -> None:
+    seed_history(tmp_path, 12)
+
+    history = make_api(tmp_path).handle("GET", "/api/state").payload["data"]["history"]
+
+    # 首页只做概览，完整列表走 /api/history 分页；total 仍是全量。
+    assert len(history["records"]) == HISTORY_PREVIEW_LIMIT
+    assert history["total"] == 12
+
+
+def test_state_limits_report_preview_size_and_max_records(tmp_path: Path) -> None:
+    limits = make_api(tmp_path).handle("GET", "/api/state").payload["data"]["limits"]
+
+    assert limits["history_preview_size"] == HISTORY_PREVIEW_LIMIT
+    assert limits["history_max_records"] == DEFAULT_MAX_RECORDS
 
 
 def test_state_reports_config_error_instead_of_crashing(tmp_path: Path) -> None:

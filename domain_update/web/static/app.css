@@ -492,6 +492,88 @@ td.is-succeeded {
   color: var(--success);
 }
 
+/* ---- 检查记录浮层 -------------------------------------------------------- */
+
+/* 标题与「查看全部」按钮同处一行。 */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 2.4rem 0 0.9rem;
+}
+
+/* 外边距上移到 .section-head，标题在 flex 行里不再自带上下间距。 */
+.section-head .section-title {
+  margin: 0;
+}
+
+dialog {
+  /* 宽度跟视口走但封顶，高度由内容决定并留出边距，避免浮层顶到屏幕边缘。 */
+  width: min(1100px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+/* ::backdrop 属于作者样式，不在 CSP 对 UA 样式表的豁免范围内，必须写在这里。 */
+dialog::backdrop {
+  background: rgba(3, 10, 16, 0.72);
+}
+
+.overlay-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  max-height: calc(100vh - 2rem);
+  padding: 1.1rem 1.2rem 1.3rem;
+}
+
+.overlay-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.overlay-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 590;
+  letter-spacing: -0.03em;
+}
+
+.overlay-status {
+  margin: 0;
+}
+
+/* 面板高度被 max-height 限住后，让表格这一块滚动，标题与翻页按钮始终留在视野里。 */
+.overlay-panel .table-wrap {
+  margin-top: 0;
+  overflow: auto;
+}
+
+.overlay-pager {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+/* .btn:disabled 的 cursor 是 progress，那是给提交类按钮的加载态用的；
+   翻页按钮禁用只表示「到头了」，用 not-allowed 才不误导。 */
+.overlay-pager .btn:disabled {
+  cursor: not-allowed;
+}
+
+/* 浮层打开时锁住背景滚动：showModal() 不保证锁 body。
+   解锁必须和加锁对称，否则页面会永久滚不动。 */
+body.is-modal-open {
+  overflow: hidden;
+}
+
 /* ---- 交互与响应式 -------------------------------------------------------- */
 
 a,
@@ -534,6 +616,11 @@ summary {
 @media (max-width: 640px) {
   .actions {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* 说明列在首页有 16rem 最小宽度，浮层比首页窄，留着它就是横向滚动的来源。 */
+  .overlay-panel td:last-child {
+    min-width: 0;
   }
 
   .metrics,

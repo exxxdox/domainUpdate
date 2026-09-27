@@ -106,6 +106,16 @@ function setBusy(button, busy, busyLabel) {
  */
 let latestConfig = null;
 
+/** 浮层当前页与总页数，只在浮层内部使用。 */
+let historyPage = 1;
+let historyTotalPages = 1;
+
+/**
+ * 最近一次读到的检查记录总数。首页的 /api/state 就带了这个数，
+ * 打开浮层时先拿它填计数，首屏不会只有一行空白。
+ */
+let historyTotal = 0;
+
 /** 按钮被禁用时必须在旁边写明原因，否则用户只看到一个点不动的按钮。 */
 function renderClearButton(buttonId, stateId, saved, inUse) {
   const button = el(buttonId);
@@ -267,6 +277,22 @@ function appendCell(row, text, className) {
   row.appendChild(cell);
 }
 
+/** 首页预览与浮层共用同一套列，两处渲染不会各自漂移。 */
+function renderHistoryRows(tbody, records) {
+  tbody.replaceChildren();
+  for (const row of records) {
+    const tr = document.createElement("tr");
+    appendCell(tr, formatTime(row.time), "");
+    appendCell(tr, row.source, "");
+    appendCell(tr, row.result, row.result === "成功" ? "is-succeeded" : "is-failed");
+    appendCell(tr, row.action, "");
+    appendCell(tr, row.ipv6, "");
+    appendCell(tr, row.previous_value, "");
+    appendCell(tr, row.message, "");
+    tbody.appendChild(tr);
+  }
+}
+
 function renderHistory(state) {
   const history = state.history;
   const summary = history.summary;
@@ -283,23 +309,71 @@ function renderHistory(state) {
 
   showNotice(el("history-error"), history.error || "", "error");
 
-  const body = el("history-body");
-  body.replaceChildren();
-  for (const row of history.records) {
-    const tr = document.createElement("tr");
-    appendCell(tr, formatTime(row.time), "");
-    appendCell(tr, row.source, "");
-    appendCell(tr, row.result, row.result === "成功" ? "is-succeeded" : "is-failed");
-    appendCell(tr, row.action, "");
-    appendCell(tr, row.ipv6, "");
-    appendCell(tr, row.previous_value, "");
-    appendCell(tr, row.message, "");
-    body.appendChild(tr);
-  }
+  renderHistoryRows(el("history-body"), history.records);
 
   const hasRecords = history.records.length > 0;
   el("history-table-wrap").hidden = !hasRecords;
   el("history-empty").hidden = hasRecords;
+
+  // 首页这里已经知道总数，浮层打开时先拿它填计数，首屏不会空着。
+  historyTotal = history.total;
+}
+
+/* ---- 检查记录浮层 ----------------------------------------------------------
+ *
+ * 首页只放预览，完整历史由 /api/history 分页提供。
+ */
+
+function renderHistoryPageStatus() {
+  el("history-page-status").textContent =
+    `第 ${historyPage} / ${historyTotalPages} 页，共 ${historyTotal} 条`;
+  el("history-prev").disabled = historyPage <= 1;
+  el("history-next").disabled = historyPage >= historyTotalPages;
+}
+
+function renderHistoryPage(data) {
+  historyPage = data.page;
+  historyTotalPages = data.total_pages;
+  historyTotal = data.total;
+  renderHistoryRows(el("history-overlay-body"), data.records);
+  showNotice(el("history-page-error"), data.error || "", "error");
+  renderHistoryPageStatus();
+}
+
+/**
+ * 只发 page，不发 page_size：页大小由服务端决定并沿响应回显，
+ * 前端再传一份就会出现两个「50」，迟早漂移。
+ */
+function runHistoryPage(page) {
+  request("GET", `/api/history?page=${page}`)
+    .then((payload) => renderHistoryPage(payload.data))
+    .catch((error) => {
+      showNotice(el("history-page-error"), error.message, "error");
+    });
+}
+
+function openHistory() {
+  // 先把首页已知的总数填上；总页数要等响应才知道，暂按一页算。
+  historyPage = 1;
+  historyTotalPages = 1;
+  el("history-overlay-body").replaceChildren();
+  showNotice(el("history-page-error"), "", "error");
+  renderHistoryPageStatus();
+
+  document.body.classList.add("is-modal-open");
+  el("history-overlay").showModal();
+  runHistoryPage(1);
+}
+
+/**
+ * 关闭只有这一条路径。滚动解锁不写在这里，而是统一挂在 dialog 的 close 事件上：
+ * ESC 是浏览器直接 close() 的，挂在事件上才能保证三条关闭路径都解锁。
+ */
+function closeHistory() {
+  const dialog = el("history-overlay");
+  if (dialog.open) {
+    dialog.close();
+  }
 }
 
 /**
@@ -477,6 +551,23 @@ function init() {
   // 首次加载还没有配置，先禁用动作按钮，避免点了只拿到错误。
   setActionsEnabled(false);
   refresh(true);
+
+  // 浮层相关绑定放在最后：el() 取不到 id 会抛错，放在前面的话一个拼错的 id 会让
+  // 上面的 refresh 也不执行，表现为整页空白。放末尾至少首页主体仍然可用。
+  el("history-open").addEventListener("click", openHistory);
+  el("history-close").addEventListener("click", closeHistory);
+  el("history-prev").addEventListener("click", () => runHistoryPage(historyPage - 1));
+  el("history-next").addEventListener("click", () => runHistoryPage(historyPage + 1));
+  el("history-overlay").addEventListener("click", (event) => {
+    // 只有点在遮罩本身才关闭：面板内部的点击 target 不会等于 dialog 本身。
+    if (event.target === el("history-overlay")) {
+      closeHistory();
+    }
+  });
+  // ESC、点遮罩、点关闭按钮最终都会触发 close，滚动解锁挂在这里天然与加锁对称。
+  el("history-overlay").addEventListener("close", () => {
+    document.body.classList.remove("is-modal-open");
+  });
 }
 
 init();

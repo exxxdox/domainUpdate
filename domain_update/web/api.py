@@ -13,7 +13,7 @@ import threading
 from dataclasses import asdict, dataclass, fields, replace
 from datetime import datetime
 from typing import Any, Mapping, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from domain_update.config import AppConfig
 from domain_update.history import DEFAULT_MAX_RECORDS, CheckRecord, summarize
@@ -21,8 +21,12 @@ from domain_update.models import DnsStatus
 from domain_update.service import DomainUpdateService
 
 
-# 表格只展示最近若干条，汇总仍基于全部已保留记录。
+# 首页表格只做概览，完整列表由 /api/history 分页提供。两个条数必须分成两个常量：
+# 合成一个的话，调首页展示长度就会顺手改掉分页的页大小。
+HISTORY_PREVIEW_LIMIT = 5
+# 分页默认页大小与上限。上限防的是一次请求让浏览器建出过多行，不是防内存占用。
 HISTORY_PAGE_SIZE = 50
+HISTORY_MAX_PAGE_SIZE = 200
 
 PROVIDER_LABELS = {
     "cloudflare": "Cloudflare",
@@ -111,6 +115,39 @@ def _success(data: Any, message: str = "") -> ApiResponse:
 
 def _failure(status: int, message: str) -> ApiResponse:
     return ApiResponse(status, {"ok": False, "message": message, "data": None})
+
+
+def _parse_query(path: str) -> dict[str, str]:
+    """把查询串解析成标量字典。
+
+    parse_qs 返回的是 str -> list[str]。直接把它当参数交给 handler，取值时
+    int(["2"]) 会抛 TypeError，被 handle() 的兜底捕获成 500，所以在这里就扁平化。
+    同名参数取最后一个，`?page=1&page=2` 时符合“后者覆盖前者”的直觉。
+    """
+    _, _, query = path.partition("?")
+    if not query:
+        return {}
+    return {
+        key: values[-1]
+        for key, values in parse_qs(query, keep_blank_values=True).items()
+    }
+
+
+def _positive_int(raw: str | None, default: int, maximum: int | None = None) -> int:
+    """解析正整数参数：缺失、非数字、非正数一律回落到 default。
+
+    不返回 400 是因为这些参数由页面生成，只有手工改地址栏排障的人才会写错；
+    夹取比报错少一个分支，也不惩罚排障的人。
+    """
+    try:
+        value = int(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        return default
+    if value <= 0:
+        return default
+    if maximum is not None and value > maximum:
+        return maximum
+    return value
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -240,7 +277,12 @@ class WebApi:
             if not content_type.lower().startswith(JSON_CONTENT_TYPE):
                 return _failure(415, "请求必须是 application/json")
         try:
-            body = self._parse_body(raw_body) if method == "POST" else {}
+            # 输入来源按方法分流：POST 是 JSON 请求体（树），GET 是查询串（str -> str）。
+            # 两者形状不同，handler 里取值要按自己的方法区分。不要把 GET 的参数挂到
+            # self 上——WebApi 是单实例跑在 ThreadingHTTPServer 上，会并发串号。
+            params: dict[str, Any] = (
+                self._parse_body(raw_body) if method == "POST" else _parse_query(path)
+            )
         except ValueError:
             return _failure(400, "请求体不是合法 JSON 对象")
         except RecursionError:
@@ -251,7 +293,7 @@ class WebApi:
 
         handler = getattr(self, handler_name)
         try:
-            return handler(body)
+            return handler(params)
         except Exception:
             # 未预期异常既不能让连接直接断掉，也不能把堆栈回给浏览器。
             logger.exception("处理请求失败：%s %s", method, path)
@@ -415,7 +457,7 @@ class WebApi:
             "schedule": self._schedule_payload(),
             "history": self._history_payload(),
             "limits": {
-                "history_page_size": HISTORY_PAGE_SIZE,
+                "history_preview_size": HISTORY_PREVIEW_LIMIT,
                 "history_max_records": DEFAULT_MAX_RECORDS,
             },
         }
@@ -467,16 +509,56 @@ class WebApi:
                 "last_run_at": _iso(summary.last_run_at),
                 "last_change_at": _iso(summary.last_change_at),
             },
-            "records": [_history_row(record) for record in records[:HISTORY_PAGE_SIZE]],
+            "records": [
+                _history_row(record) for record in records[:HISTORY_PREVIEW_LIMIT]
+            ],
             "total": len(records),
             # 读取失败只是报告的一部分不可用，不应让整个页面报错。
             "error": None if result.ok else result.message,
         }
 
+    def _history_page(self, params: Mapping[str, str]) -> ApiResponse:
+        """分页返回检查记录，供首页浮层浏览全部历史。
+
+        必须先夹取 page_size 再算 total_pages：page_size 为 0 会让除法抛
+        ZeroDivisionError，被 handle() 的兜底变成 500，客户端只看到“服务内部错误”。
+
+        分页切片放在这里而不是 store 里：store 只有“读取全部”一个语义，
+        而“取第几页”是接口层的展示问题，和首页预览的截断是同一类逻辑。
+        """
+        page_size = _positive_int(
+            params.get("page_size"), HISTORY_PAGE_SIZE, HISTORY_MAX_PAGE_SIZE
+        )
+        result = self._service.history_store.load()
+        records: list[CheckRecord] = list(result.data or []) if result.ok else []
+        total = len(records)
+        # 空集也至少一页：page 的最小值是 1，取 0 会让 1 <= page <= total_pages 不成立，
+        # 前端就得为空集单独写一套分支。
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        # 越界时夹到最后一页而不是回空表：定时任务写入新记录会让内容整体后移，
+        # 用户停在第 N 页时看到空表会以为历史丢了。
+        page = min(_positive_int(params.get("page"), 1), total_pages)
+        start = (page - 1) * page_size
+        return _success(
+            {
+                "records": [
+                    _history_row(record)
+                    for record in records[start : start + page_size]
+                ],
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+                # 与 /api/state 一致：读取失败只让这一块不可用，不整页报错。
+                "error": None if result.ok else result.message,
+            }
+        )
+
 
 _ROUTES: dict[str, tuple[frozenset[str], str]] = {
     "/healthz": (frozenset({"GET"}), "_health"),
     "/api/state": (frozenset({"GET"}), "_state"),
+    "/api/history": (frozenset({"GET"}), "_history_page"),
     "/api/config": (frozenset({"POST"}), "_save_config"),
     "/api/ipv6": (frozenset({"POST"}), "_detect_ipv6"),
     "/api/dns": (frozenset({"POST"}), "_query_dns"),

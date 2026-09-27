@@ -263,7 +263,10 @@
           </div>
         </div>
 
-        <h2 class="section-title">检查记录报告</h2>
+        <div class="section-head">
+          <h2 class="section-title">检查记录报告</h2>
+          <button type="button" class="btn" id="history-open">查看全部</button>
+        </div>
         <div class="metrics metrics-compact">
           <div class="metric">
             <span class="metric-label">检查次数</span>
@@ -311,6 +314,48 @@
         </div>
       </main>
     </div>
+
+    <!--
+      用原生 <dialog> + showModal()：role、aria-modal、焦点陷阱、ESC 关闭、::backdrop
+      与 top layer 都是浏览器白拿的，不必和 .sidebar 的 sticky 层叠打交道。
+      不要给它加 hidden 属性：app.css 的 [hidden]{display:none!important} 会压过浏览器
+      给 dialog 的 display:block，结果是背景变暗而浮层不出现。显隐只认 open / close()。
+      内层 .overlay-panel 是必需的：判「点了遮罩」靠 event.target === dialog，
+      面板就是 dialog 本身时，点面板空白处会被误判成点遮罩而关闭。
+    -->
+    <dialog id="history-overlay" aria-labelledby="history-overlay-title">
+      <div class="overlay-panel">
+        <div class="overlay-head">
+          <h2 class="overlay-title" id="history-overlay-title">检查记录报告</h2>
+          <button type="button" class="btn" id="history-close">关闭</button>
+        </div>
+
+        <p class="caption overlay-status" id="history-page-status" aria-live="polite"></p>
+        <p class="notice" id="history-page-error" hidden></p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">时间</th>
+                <th scope="col">来源</th>
+                <th scope="col">结果</th>
+                <th scope="col">动作</th>
+                <th scope="col">检测到的 IPv6</th>
+                <th scope="col">变更前记录值</th>
+                <th scope="col">说明</th>
+              </tr>
+            </thead>
+            <tbody id="history-overlay-body"></tbody>
+          </table>
+        </div>
+
+        <div class="overlay-pager">
+          <button type="button" class="btn" id="history-prev">上一页</button>
+          <button type="button" class="btn" id="history-next">下一页</button>
+        </div>
+      </div>
+    </dialog>
 
     <script src="/app.js" defer></script>
   </body>
