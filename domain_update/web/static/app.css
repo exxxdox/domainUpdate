@@ -121,11 +121,32 @@ body {
   position: sticky;
   /* 留出 1.6rem 顶部空隙，滚动时侧栏标题不会贴住视口边缘。 */
   top: 1.6rem;
+  display: flex;
+  flex-direction: column;
   padding: 1.3rem 1.35rem 1.4rem;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: linear-gradient(180deg, var(--panel-2), var(--panel));
   box-shadow: 0 24px 60px -40px rgba(0, 0, 0, 0.95);
+}
+
+/* 表单吃掉侧栏里除标题与提示条之外的剩余高度，保存按钮再靠 auto 外边距贴到最下面。
+   flex-basis 用 auto 且不收缩：字段全部展开时表单保持自然高度，由侧栏去滚动，
+   而不是把输入框压扁。 */
+.sidebar > form {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+}
+
+.sidebar > form > .btn-block {
+  margin-top: auto;
+}
+
+/* margin-top:auto 在没有多余空间时等于 0。侧栏不拉伸（窄屏）或内容比视口高时
+   按钮就会被顶到最后一张卡上，所以要由上面那张卡自己留出这段间隙。 */
+.sidebar .card:has(+ .btn-block) {
+  margin-bottom: 1rem;
 }
 
 .sidebar-head {
@@ -1170,7 +1191,10 @@ summary {
     padding: 1.4rem 1.7rem;
   }
 
+  /* 视口比侧栏内容高时，侧栏拉到与主区同高：下沿贴着视口下边留出同样的边距，
+     页面不再是一块高一块矮。内容比视口高时 max-height 兜住，侧栏内部滚动。 */
   .sidebar {
+    align-self: stretch;
     max-height: 100%;
     overflow-y: auto;
   }
