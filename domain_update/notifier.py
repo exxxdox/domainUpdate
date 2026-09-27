@@ -1,11 +1,17 @@
 """Gotify 通知适配。"""
 
+from __future__ import annotations
+
+import logging
 from urllib.parse import urlparse
 
 import requests
 
 from domain_update.config import AppConfig
 from domain_update.models import Result
+
+
+logger = logging.getLogger(__name__)
 
 
 def send_gotify(config: AppConfig, title: str, message: str) -> Result[bool]:
@@ -24,6 +30,13 @@ def send_gotify(config: AppConfig, title: str, message: str) -> Result[bool]:
         )
         response.raise_for_status()
         return Result.success("Gotify 通知发送成功", True)
-    except requests.RequestException:
+    except requests.RequestException as error:
+        # 不记录完整 URL：Token 在查询参数里，日志会泄露凭据。
+        logger.warning(
+            "Gotify 通知发送失败：类型=%s 状态码=%s 原因=%s",
+            type(error).__name__,
+            getattr(getattr(error, "response", None), "status_code", None),
+            error,
+        )
         return Result.failure("DNS 已更新，但 Gotify 通知发送失败")
 

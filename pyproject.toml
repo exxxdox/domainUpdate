@@ -4,15 +4,15 @@ version = "0.1.0"
 description = "Update DNS records with the current public IPv6 address"
 readme = "README.md"
 requires-python = ">=3.10"
+# 依赖只保留运行必需项：界面改为标准库 http.server，Cloudflare 改为直调 REST，
+# 去掉 streamlit 与 cloudflare 两个大包后镜像体积下降约 470MB。
 dependencies = [
     "apscheduler>=3.11,<4",
     "alibabacloud-alidns20150109==3.7.0",
     "alibabacloud-tea-openapi==0.4.2",
     "alibabacloud-tea-util==0.3.14",
-    "cloudflare==4.3.1",
     "python-dotenv==1.2.1",
     "requests==2.32.5",
-    "streamlit>=1.50,<2",
 ]
 
 [dependency-groups]

@@ -1,34 +1,39 @@
-"""先恢复后台任务，再在同一进程启动 Streamlit。"""
+"""先恢复后台定时任务，再启动控制台 HTTP 服务。"""
 
 from __future__ import annotations
 
-import sys
-
-from streamlit.web import cli as streamlit_cli
+import logging
 
 from domain_update.config import ConfigStore
+from domain_update.logging_setup import configure_logging
 from domain_update.scheduler import get_scheduler
+from domain_update.web.server import serve
+
+
+HOST = "0.0.0.0"
+# 容器内必须监听所有网卡端口映射才生效；对外暴露面由 compose 的端口绑定控制。
+PORT = 8501
+
+logger = logging.getLogger(__name__)
 
 
 def main() -> int:
-    config_result = ConfigStore().load()
-    if config_result.ok and config_result.data is not None:
-        # 容器启动即恢复调度，不依赖用户先打开网页触发 Streamlit 脚本。
-        get_scheduler().configure(config_result.data)
+    # 日志必须最先配置：连配置读取失败这类启动期问题也要能在 docker logs 里看到。
+    configure_logging()
 
-    sys.argv = [
-        "streamlit",
-        "run",
-        "streamlit_app.py",
-        "--server.address=0.0.0.0",
-        "--server.port=8501",
-        # 容器启动必须非交互，避免 Streamlit 首次运行询问邮箱而阻塞。
-        "--server.headless=true",
-        # 仅展示本地访问地址，避免启动日志探测并打印宿主公网 IP。
-        "--browser.serverAddress=localhost",
-        "--browser.gatherUsageStats=false",
-    ]
-    return streamlit_cli.main()
+    store = ConfigStore()
+    logger.info("启动控制台：数据目录=%s 监听=%s:%s", store.data_dir, HOST, PORT)
+
+    config_result = store.load()
+    if config_result.ok and config_result.data is not None:
+        # 容器启动即恢复调度，不依赖用户先打开网页触发。
+        scheduler_result = get_scheduler().configure(config_result.data)
+        logger.info("定时检查状态：%s", scheduler_result.message)
+    else:
+        # 不阻断启动：允许用户打开页面完成首次配置。
+        logger.warning("未能恢复定时检查：%s", config_result.message)
+
+    return serve(host=HOST, port=PORT)
 
 
 if __name__ == "__main__":

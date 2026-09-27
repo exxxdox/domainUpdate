@@ -1,5 +1,8 @@
 """公网 IPv6 探测。"""
 
+from __future__ import annotations
+
+import logging
 from ipaddress import AddressValueError, IPv6Address
 
 import requests
@@ -9,6 +12,8 @@ from domain_update.models import Result
 
 IPIFY_IPV6_URL = "https://api6.ipify.org"
 REQUEST_TIMEOUT = (5, 10)
+
+logger = logging.getLogger(__name__)
 
 
 def get_public_ipv6() -> Result[str]:
@@ -22,7 +27,11 @@ def get_public_ipv6() -> Result[str]:
         if not address.is_global:
             return Result.failure("检测到的 IPv6 不是公网地址")
         return Result.success("公网 IPv6 获取成功", address.compressed)
-    except (requests.RequestException, AddressValueError):
-        # 网络异常可能含代理或请求细节，因此对 UI 返回稳定且不泄密的消息。
+    except (requests.RequestException, AddressValueError) as error:
+        # 网络异常可能含代理或请求细节，因此对 UI 返回稳定且不泄密的消息；
+        # 日志里记异常类型与原因，足以区分"没有 IPv6 出口"和"返回内容不是 IPv6"。
+        logger.warning(
+            "公网 IPv6 获取失败：类型=%s 原因=%s", type(error).__name__, error
+        )
         return Result.failure("公网 IPv6 获取失败，请检查容器的 IPv6 连通性")
 

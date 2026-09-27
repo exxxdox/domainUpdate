@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from datetime import datetime
 
@@ -14,6 +15,8 @@ from domain_update.providers import create_provider
 
 
 _UPDATE_LOCK = threading.Lock()
+
+logger = logging.getLogger(__name__)
 
 
 class DomainUpdateService:
@@ -67,6 +70,13 @@ class DomainUpdateService:
             result = self._perform_update()
             # 成功与失败都记入历史，报告才能反映真实成功率。
             self._record_check(source, result)
+            logger.info(
+                "检查完成：来源=%s 成功=%s 动作=%s 消息=%s",
+                source,
+                result.ok,
+                result.data.action if result.data is not None else "failed",
+                result.message,
+            )
             return result
 
     def _perform_update(self) -> Result[UpdateStatus]:
@@ -116,7 +126,7 @@ class DomainUpdateService:
     def _record_check(self, source: str, result: Result[UpdateStatus]) -> None:
         """历史是旁路能力：写不进去也不能影响 DNS 更新的返回结果。"""
         status = result.data
-        self.history_store.append(
+        written = self.history_store.append(
             CheckRecord(
                 timestamp=datetime.now().astimezone(),
                 source=source,
@@ -127,6 +137,9 @@ class DomainUpdateService:
                 previous_value=status.previous_value if status is not None else None,
             )
         )
+        if not written.ok:
+            # 历史写入现在是完全静默的，报告缺记录时无从判断是没执行还是没写进去。
+            logger.warning("检查记录写入失败：%s", written.message)
 
 
 def create_service() -> DomainUpdateService:

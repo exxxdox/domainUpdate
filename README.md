@@ -2,6 +2,9 @@
 
 通过 Web 页面查看公网 IPv6，并将 Cloudflare 或阿里云的 AAAA 记录同步到当前地址。
 
+页面由项目自带的轻量 HTTP 服务提供（Python 标准库 `http.server` + 原生 HTML/CSS/JS），
+不依赖 Streamlit 等 Web 框架，镜像体积因此保持在 250MB 以内。
+
 ## 功能
 
 - 在 Cloudflare 与阿里云之间切换当前 DNS 服务商
@@ -10,6 +13,7 @@
 - 按分钟设置后台定时检查
 - 在页面中保存连接参数和 Gotify 通知配置
 - 容器重启后从持久化卷恢复配置与定时任务
+- 检查记录报告：汇总每次检查的时间、来源、结果与变更前后地址
 
 ## Docker 运行
 
@@ -27,6 +31,15 @@ docker compose up -d --build
 docker compose ps
 docker compose logs -f domain-update
 ```
+
+## 安全边界
+
+控制台可以改写 DNS 解析记录，请按以下前提使用：
+
+- **没有内建登录**。服务本身不做身份认证，安全性依赖部署位置：默认只监听宿主机回环地址，对外暴露前必须加一层带认证的反向代理。
+- **密钥永不下发到页面**。状态接口只返回“是否已保存”的布尔值，密码框始终为空，留空提交表示保留原值。清除凭据需要在「已保存凭据」中显式勾选，且当前服务商的必填密钥不允许清空。
+- **写操作只接受 JSON 请求体**。浏览器表单无法发送 `application/json`，配合不返回任何 CORS 头与 `Origin` 校验，可挡住其他站点借访问者浏览器改写配置的跨站请求。
+- 页面响应带严格 CSP（`default-src 'none'`）与 `nosniff`、`X-Frame-Options: DENY`，且不加载任何外部资源。
 
 ## 本地运行
 
@@ -89,6 +102,22 @@ uv run python launcher.py
 | `ALIBABA_CLOUD_IPTYPE` | 记录类型，应为 `AAAA` |
 | `GOTIFY_ADDRESS` | Gotify 地址 |
 | `GOTIFY_TOKEN` | Gotify Token |
+
+## HTTP 接口
+
+页面使用以下同源接口，也可用于脚本调用或排障。所有响应统一为
+`{"ok": bool, "message": str, "data": ...}` 信封。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/healthz` | 健康检查，返回 `{"status": "ok"}`；不读取配置、不发网络请求 |
+| `GET` | `/api/state` | 配置（脱敏）、公网地址、DNS 状态、调度器状态、检查记录报告 |
+| `POST` | `/api/config` | 保存配置，成功后同步定时检查 |
+| `POST` | `/api/ipv6` | 检测公网 IPv6 |
+| `POST` | `/api/dns` | 查询当前 DNS 记录 |
+| `POST` | `/api/update` | 检查并更新，结果记入检查记录（来源为 `manual`） |
+
+请求体字段名与响应中的字段名一致；`POST` 必须带 `Content-Type: application/json`。
 
 ## IPv6 检测
 

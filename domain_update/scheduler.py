@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,6 +15,8 @@ from domain_update.service import DomainUpdateService
 
 
 JOB_ID = "dns-ipv6-check"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -74,6 +77,7 @@ class UpdateScheduler:
             self._last_run = datetime.now().astimezone()
             self._last_ok = result.ok
             self._last_message = result.message
+        logger.info("定时检查执行完毕：成功=%s 消息=%s", result.ok, result.message)
 
     def snapshot(self) -> SchedulerSnapshot:
         with self._lock:
