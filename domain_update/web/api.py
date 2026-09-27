@@ -74,7 +74,6 @@ _API_NAME_FOR_APP_FIELD = {
     "alibaba_cloud_access_key_id": "alibaba_access_key_id",
     "alibaba_cloud_access_key_secret": "alibaba_access_key_secret",
     "alibaba_cloud_record_id": "alibaba_record_id",
-    "alibaba_cloud_rr": "alibaba_rr",
     "alibaba_cloud_ip_type": "alibaba_ip_type",
 }
 
@@ -191,12 +190,14 @@ def build_config(current: AppConfig, body: Mapping[str, Any]) -> AppConfig:
 
 
 def _record_name_for(config: AppConfig | None, provider: str) -> str:
-    """按服务商取目标记录名：两家把记录名存在不同字段里。"""
-    if config is None:
+    """按服务商取配置里的目标记录名，仅用于查询结果缺席时的占位展示。
+
+    只有 Cloudflare 把记录名存在配置里；阿里云以 Record ID 为主键，
+    记录名来自接口查询结果（见 service 的 UpdateStatus.record_name）。
+    """
+    if config is None or provider != "cloudflare":
         return ""
-    if provider == "cloudflare":
-        return config.cloudfare_record_name
-    return config.alibaba_cloud_rr
+    return config.cloudfare_record_name
 
 
 def _dns_payload(status: DnsStatus | None) -> dict[str, Any] | None:
@@ -425,7 +426,8 @@ class WebApi:
             # 更新成功后 DNS 的当前值就是刚写入的地址，无需再查一次接口。
             self._console.dns = DnsStatus(
                 provider=status.provider,
-                record_name=_record_name_for(config, status.provider),
+                # 优先用刚查到的记录身份；阿里云配置里没有记录名，只能靠它。
+                record_name=status.record_name or _record_name_for(config, status.provider),
                 record_type="AAAA",
                 value=status.current_value,
                 record_id="",

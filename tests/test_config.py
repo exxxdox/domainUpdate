@@ -19,6 +19,20 @@ def test_config_store_creates_default_file_on_first_run(
     assert (tmp_path / "config.json").exists()
 
 
+def test_alibaba_config_no_longer_requires_rr() -> None:
+    # 主机记录 RR 已删除：阿里云写入路径只认 Record ID + 查询结果，
+    # 配置里不再保存这一字段，校验也不该再要求它。
+    config = AppConfig(
+        provider="alibaba",
+        alibaba_cloud_access_key_id="key-id",
+        alibaba_cloud_access_key_secret="secret",
+        alibaba_cloud_record_id="record-id",
+    )
+
+    assert config.validate().ok
+    assert not hasattr(config, "alibaba_cloud_rr")
+
+
 def test_config_store_round_trip(tmp_path: Path) -> None:
     store = ConfigStore(tmp_path)
     config = AppConfig(

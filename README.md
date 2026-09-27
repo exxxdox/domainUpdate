@@ -54,10 +54,10 @@ docker compose logs -f domain-update
 - AccessKey ID
 - AccessKey Secret
 - 解析记录 ID
-- 主机记录 RR
 - 记录类型，目前固定为 `AAAA`
 
-阿里云使用解析记录 ID 更新已有记录，不会自动创建新记录。
+阿里云使用解析记录 ID 更新已有记录，不会自动创建新记录。主机记录名与记录类型取自
+接口查询结果，不需要填写。
 
 ### 可选通知
 

@@ -185,7 +185,9 @@ class AlibabaProvider:
             )
             body = response.body
             value = body.value or ""
-            rr = body.rr or self._config.alibaba_cloud_rr
+            # 配置里已不保存主机记录：记录名只能来自接口返回，取不到就留空，
+            # 由 set_ipv6 明确拒绝，而不是拿一个猜测值去发写请求。
+            rr = str(body.rr or "")
             record_type = body.type or self._config.alibaba_cloud_ip_type
             status = DnsStatus(
                 provider="alibaba",
@@ -205,6 +207,10 @@ class AlibabaProvider:
         if current is None:
             # 阿里云配置以 Record ID 为主键，缺失记录无法安全推导域名并新建。
             return Result.failure("阿里云记录不存在或不可访问，无法按 Record ID 更新")
+        if not current.record_name.strip():
+            # 更新请求必须带 rr，配置里又没有兜底值：查不到记录名就拒绝，
+            # 否则会发出一条 rr="" 的请求，可能改名或直接失败。
+            return Result.failure("阿里云查询结果缺少主机记录，无法更新")
         if current.value == ipv6:
             return Result.success("阿里云 AAAA 记录无需更新", "unchanged")
         request = alidns_models.UpdateDomainRecordRequest(

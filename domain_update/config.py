@@ -28,7 +28,6 @@ class AppConfig:
     alibaba_cloud_access_key_id: str = ""
     alibaba_cloud_access_key_secret: str = ""
     alibaba_cloud_record_id: str = ""
-    alibaba_cloud_rr: str = ""
     alibaba_cloud_ip_type: str = "AAAA"
     cloudfare_token: str = ""
     cloudfare_zone_id: str = ""
@@ -72,8 +71,8 @@ class AppConfig:
                 for label, value in (
                     ("阿里云 AccessKey ID", self.alibaba_cloud_access_key_id),
                     ("阿里云 AccessKey Secret", self.alibaba_cloud_access_key_secret),
+                    # 主机记录 RR 不再是配置项：写入时以 Record ID 查到的记录身份为准。
                     ("阿里云 Record ID", self.alibaba_cloud_record_id),
-                    ("阿里云主机记录 RR", self.alibaba_cloud_rr),
                 )
                 if not value.strip()
             ]

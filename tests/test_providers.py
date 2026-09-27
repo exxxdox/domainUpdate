@@ -272,7 +272,6 @@ def test_alibaba_update_uses_queried_record_identity(client_type: MagicMock) -> 
         alibaba_cloud_access_key_id="key-id",
         alibaba_cloud_access_key_secret="secret",
         alibaba_cloud_record_id="record-id",
-        alibaba_cloud_rr="wrong-config-value",
     )
     provider = AlibabaProvider(config)
     current = DnsStatus(
@@ -289,3 +288,54 @@ def test_alibaba_update_uses_queried_record_identity(client_type: MagicMock) -> 
     request = client_type.return_value.update_domain_record_with_options.call_args.args[0]
     assert request.rr == "actual-rr"
     assert request.type == "AAAA"
+
+
+@patch("domain_update.providers.AlidnsClient")
+def test_alibaba_get_status_reads_record_identity_from_api(
+    client_type: MagicMock,
+) -> None:
+    # 配置里已无 RR 字段，记录名只能来自 DescribeDomainRecordInfo 的返回。
+    config = AppConfig(
+        provider="alibaba",
+        alibaba_cloud_access_key_id="key-id",
+        alibaba_cloud_access_key_secret="secret",
+        alibaba_cloud_record_id="record-id",
+    )
+    body = client_type.return_value.describe_domain_record_info_with_options.return_value.body
+    body.rr = "home"
+    body.type = "AAAA"
+    body.value = "240e::1"
+
+    result = AlibabaProvider(config).get_status()
+
+    assert result.ok
+    assert result.data is not None
+    assert result.data.record_name == "home"
+    assert result.data.record_type == "AAAA"
+    assert result.data.value == "240e::1"
+
+
+@patch("domain_update.providers.AlidnsClient")
+def test_alibaba_update_refuses_when_queried_rr_missing(
+    client_type: MagicMock,
+) -> None:
+    # 查询结果缺 RR 时必须拒绝：发一条 rr="" 的请求可能改名或直接失败，不能静默继续。
+    config = AppConfig(
+        provider="alibaba",
+        alibaba_cloud_access_key_id="key-id",
+        alibaba_cloud_access_key_secret="secret",
+        alibaba_cloud_record_id="record-id",
+    )
+    current = DnsStatus(
+        provider="alibaba",
+        record_name="",
+        record_type="AAAA",
+        value="240e::1",
+        record_id="record-id",
+    )
+
+    result = AlibabaProvider(config).set_ipv6("240e::2", current)
+
+    assert not result.ok
+    assert result.message == "阿里云查询结果缺少主机记录，无法更新"
+    client_type.return_value.update_domain_record_with_options.assert_not_called()

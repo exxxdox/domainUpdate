@@ -47,4 +47,7 @@ class UpdateStatus:
     ipv6: str
     previous_value: str | None
     current_value: str
+    # 本次更新实际作用的记录名，取自更新前的查询结果。
+    # 阿里云配置里不保存记录名，页面只能靠它显示目标记录。
+    record_name: str = ""
 

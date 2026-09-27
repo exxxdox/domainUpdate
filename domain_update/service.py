@@ -128,6 +128,9 @@ class DomainUpdateService:
             ipv6=ipv6,
             previous_value=previous,
             current_value=ipv6,
+            # 记录名以查询结果为准：两家里只有 Cloudflare 把它写进配置，
+            # 这里统一带上，页面就不必按服务商分叉推断。
+            record_name=current.record_name if current is not None else "",
         )
         message = write_result.message
         if action in {"created", "updated"}:

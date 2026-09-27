@@ -11,7 +11,6 @@ const TEXT_FIELDS = [
   "cloudflare_record_name",
   "alibaba_access_key_id",
   "alibaba_record_id",
-  "alibaba_rr",
   "gotify_address",
 ];
 const SECRET_FIELDS = [
@@ -217,14 +216,16 @@ function renderIp(state) {
   el("ip-checked-at").textContent = formatTime(state.ipv6_checked_at);
 }
 
-/** 尚无查询结果时用配置里的目标记录名占位，页面不会只剩一排“—”。 */
+/**
+ * 尚无查询结果时用配置里的目标记录名占位，页面不会只剩一排“—”。
+ * 只有 Cloudflare 把记录名写在配置里；阿里云的记录名来自接口查询结果，
+ * 查不到就只能显示“—”。
+ */
 function configRecordName(config) {
-  if (!config) {
+  if (!config || config.provider !== "cloudflare") {
     return "";
   }
-  return config.provider === "cloudflare"
-    ? config.cloudflare_record_name
-    : config.alibaba_rr;
+  return config.cloudflare_record_name;
 }
 
 function renderDns(state, config) {

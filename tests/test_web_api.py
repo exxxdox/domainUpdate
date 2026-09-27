@@ -122,6 +122,8 @@ def test_state_exposes_provider_and_non_secret_fields(tmp_path: Path) -> None:
     assert config["cloudflare_record_name"] == "home.example.com"
     assert config["gotify_address"] == "notify.example.com"
     assert config["schedule_interval_minutes"] == 10
+    # 主机记录 RR 字段已删除，接口不应再暴露一个已经无效的配置项。
+    assert "alibaba_rr" not in config
 
 
 def test_state_reports_scheduler_snapshot(tmp_path: Path) -> None:
