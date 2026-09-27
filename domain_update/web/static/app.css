@@ -1,21 +1,30 @@
 /* IPv6 域名控制台样式。
-   视觉沿用原 Streamlit 版的深色控制台语言：网格画布、左侧青色强调线、等宽 IP 主卡。 */
+   视觉语言：链路监控仪表。深空底色 + 网格坐标纸 + 青色信号，
+   读数（地址、时间、计数）用等宽字体对齐，交互元素全部带 hover 反馈。
+   宽屏（≥1400px）下主区拆两列并锁住视口高度，1440p 一屏内不出现页面滚动条。 */
 
 :root {
-  --canvas: #08131f;
-  --panel: #0d1c2a;
-  --panel-strong: #102536;
-  --panel-input: #0a1824;
-  --line: #203c50;
-  --line-soft: #29495b;
-  --link: #38c8e8;
-  --link-soft: #95e9f7;
-  --text: #edf8fb;
-  --muted: #8eabb9;
-  --muted-strong: #c5dce5;
+  /* 底色分三层：画布、面板、阱（读数窗）。层数少但每层差一档，视线能立刻分出前后。 */
+  --void: #050d16;
+  --panel: #0a1826;
+  --panel-2: #0e2233;
+  --well: #06111c;
+  --line: #1c3a4d;
+  --line-soft: #27506a;
+  --signal: #35d0f0;
+  --signal-soft: #97e9fa;
+  --signal-dim: #1a7f9b;
+  --text: #e9f7fb;
+  --muted: #86a6b6;
+  --muted-strong: #c3dae4;
   --warning: #f6a640;
   --danger: #ff8a7a;
   --success: #5fe0a8;
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas,
+    "DejaVu Sans Mono", monospace;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   color-scheme: dark;
 }
 
@@ -30,26 +39,75 @@
   box-sizing: border-box;
 }
 
+/* 等宽读数：数字必须等宽，否则每刷新一次时间/计数，整行都在左右抖动。 */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
-  background:
-    linear-gradient(rgba(56, 200, 232, 0.028) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(56, 200, 232, 0.028) 1px, transparent 1px),
-    var(--canvas);
-  background-size: 38px 38px;
+  background-color: var(--void);
+  /* 四层背景：两处青色辉光给画面定光源，一张 40px 网格纸给"仪表盘"的坐标感。
+     网格固定不随内容滚动，宽屏锁屏时它就是一个静止的坐标底。 */
+  background-image:
+    radial-gradient(90rem 46rem at 80% -12%, rgba(53, 208, 240, 0.1), transparent 62%),
+    radial-gradient(58rem 38rem at 4% 108%, rgba(53, 208, 240, 0.055), transparent 60%),
+    linear-gradient(rgba(53, 208, 240, 0.032) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(53, 208, 240, 0.032) 1px, transparent 1px);
+  background-size: auto, auto, 40px 40px, 40px 40px;
+  background-attachment: fixed;
   color: var(--text);
-  font: 15px/1.6 "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font: 15px/1.6 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
 }
+
+::selection {
+  background: rgba(53, 208, 240, 0.28);
+  color: #fff;
+}
+
+/* 内部滚动区（侧栏、主区、表格）统一细滚动条，避免出现系统默认的宽灰条。 */
+.main,
+.sidebar,
+.table-wrap {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-soft) transparent;
+  overscroll-behavior: contain;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--line-soft);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--signal-dim);
+  background-clip: content-box;
+}
+
+/* ---- 外壳布局 ------------------------------------------------------------ */
 
 .shell {
   display: grid;
   /* 侧栏固定宽度，主区自适应；窄屏在媒体查询里退化为单列。 */
   grid-template-columns: 384px minmax(0, 1fr);
-  gap: 2.2rem;
-  /* 铺满视口：不再用 max-width + auto 居中，宽屏上左右留白只由 padding 决定。 */
+  gap: 2rem;
+  /* 铺满视口：不用 max-width 居中，宽屏上左右留白只由 padding 决定。 */
   width: 100%;
-  padding: 2.4rem 2rem 4rem;
+  padding: 1.9rem 1.8rem 2.4rem;
 }
 
 /* ---- 侧栏：连接设置 ------------------------------------------------------ */
@@ -59,16 +117,22 @@ body {
   position: sticky;
   /* 留出 1.6rem 顶部空隙，滚动时侧栏标题不会贴住视口边缘。 */
   top: 1.6rem;
-  padding: 1.4rem;
+  padding: 1.3rem 1.35rem 1.4rem;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: var(--panel);
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  box-shadow: 0 24px 60px -40px rgba(0, 0, 0, 0.95);
+}
+
+.sidebar-head {
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--line);
 }
 
 .sidebar-title {
   margin: 0 0 0.35rem;
-  font-size: 1.22rem;
-  font-weight: 600;
+  font-size: 1.2rem;
+  font-weight: 620;
   letter-spacing: -0.02em;
 }
 
@@ -84,13 +148,42 @@ body {
   margin-bottom: 0.75rem;
 }
 
+/* 设置分组卡：左侧信号条是整栏唯一的纵向装饰，hover 时点亮并微微上浮。 */
 .card {
-  margin-bottom: 0.95rem;
+  position: relative;
+  margin-top: 0.95rem;
   padding: 0.9rem 1rem 1rem;
   border: 1px solid var(--line);
-  border-left: 3px solid var(--link);
-  border-radius: 4px;
-  background: #0b1a27;
+  border-radius: 5px;
+  background: rgba(9, 24, 37, 0.72);
+  transition:
+    border-color 240ms var(--ease-out),
+    box-shadow 240ms var(--ease-out),
+    transform 240ms var(--ease-out);
+}
+
+.card::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: -1px;
+  bottom: -1px;
+  width: 3px;
+  border-radius: 5px 0 0 5px;
+  background: linear-gradient(180deg, var(--signal-dim), transparent 82%);
+  transition: background 240ms var(--ease-out);
+}
+
+.card:hover {
+  border-color: var(--line-soft);
+  transform: translateY(-2px);
+  box-shadow:
+    0 20px 34px -26px rgba(0, 0, 0, 0.9),
+    0 0 0 1px rgba(53, 208, 240, 0.06);
+}
+
+.card:hover::before {
+  background: linear-gradient(180deg, var(--signal), rgba(53, 208, 240, 0.1));
 }
 
 /* 分组标题：四组设置共用同款小标题，末尾渐隐分隔线让标题与内容自成一块。 */
@@ -99,8 +192,8 @@ body {
   align-items: center;
   gap: 0.6rem;
   margin: 0.35rem 0 0.7rem;
-  color: var(--link-soft);
-  font-size: 0.76rem;
+  color: var(--signal-soft);
+  font-size: 0.74rem;
   font-weight: 650;
   letter-spacing: 0.16em;
   list-style: none;
@@ -112,11 +205,13 @@ body {
   flex: 1;
   height: 1px;
   background: linear-gradient(90deg, var(--line), transparent);
+  transition: background 240ms var(--ease-out);
 }
 
 /* 折叠标题（卡片级与卡片内二级共用同款标题样式）：可点击，并给出展开指示。 */
 summary.side-heading {
   cursor: pointer;
+  transition: color 200ms var(--ease-out);
 }
 
 summary.side-heading::-webkit-details-marker {
@@ -130,10 +225,26 @@ summary.side-heading::before {
   color: var(--muted);
   font-size: 0.9em;
   letter-spacing: 0;
+  transition:
+    color 200ms var(--ease-out),
+    transform 200ms var(--ease-out);
 }
 
 details[open] > summary.side-heading::before {
   content: "▾";
+}
+
+summary.side-heading:hover {
+  color: #fff;
+}
+
+summary.side-heading:hover::before {
+  color: var(--signal);
+  transform: translateX(2px);
+}
+
+summary.side-heading:hover::after {
+  background: linear-gradient(90deg, var(--signal-dim), transparent);
 }
 
 /* 卡片内的二级折叠：与上方单选行之间补一条分隔，收起时也不显得两块挤在一起。 */
@@ -155,6 +266,13 @@ details[open] > summary.side-heading::before {
   margin-bottom: 0.35rem;
   color: var(--muted-strong);
   font-size: 0.8rem;
+  transition: color 200ms var(--ease-out);
+}
+
+/* 悬停标签时标签变亮，指示"这一行可以输入"。 */
+.field:hover > label,
+.field:hover > .field-label {
+  color: var(--signal-soft);
 }
 
 input[type="text"],
@@ -162,13 +280,42 @@ input[type="password"],
 input[type="number"],
 select {
   width: 100%;
-  min-height: 2.4rem;
+  min-height: 2.35rem;
   padding: 0.4rem 0.65rem;
   border: 1px solid var(--line-soft);
   border-radius: 4px;
-  background: var(--panel-input);
+  background: var(--well);
   color: var(--text);
   font: inherit;
+  transition:
+    border-color 200ms var(--ease-out),
+    box-shadow 200ms var(--ease-out),
+    background 200ms var(--ease-out);
+}
+
+input[type="text"]:hover:not(:disabled),
+input[type="password"]:hover:not(:disabled),
+input[type="number"]:hover:not(:disabled),
+select:hover:not(:disabled) {
+  border-color: var(--signal-dim);
+  box-shadow: 0 0 0 3px rgba(53, 208, 240, 0.07);
+}
+
+input:focus,
+select:focus {
+  border-color: var(--signal);
+  background: #081724;
+}
+
+/* 占位符由浏览器按 color-scheme 给默认灰，在深底上偏暗；显式给一档，保持可读。 */
+::placeholder {
+  color: #6f8d9c;
+  opacity: 1;
+}
+
+input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .radio-row {
@@ -186,21 +333,45 @@ select {
   cursor: pointer;
 }
 
+/* 单选卡片：整块可点，hover 抬边，选中态交给 :has 读 input，不必改脚本。 */
 .radio {
   flex: 1;
   padding: 0.5rem 0.7rem;
   border: 1px solid var(--line-soft);
   border-radius: 4px;
-  background: var(--panel-input);
+  background: var(--well);
+  transition:
+    border-color 200ms var(--ease-out),
+    background 200ms var(--ease-out),
+    box-shadow 200ms var(--ease-out),
+    color 200ms var(--ease-out);
+}
+
+.radio:hover {
+  border-color: var(--signal-dim);
+  background: #0b1e2c;
+  color: var(--text);
+}
+
+.radio:has(input:checked) {
+  border-color: var(--signal);
+  background: linear-gradient(180deg, rgba(53, 208, 240, 0.16), rgba(53, 208, 240, 0.04));
+  color: #fff;
+  box-shadow: 0 0 0 3px rgba(53, 208, 240, 0.08);
 }
 
 .check {
   margin-bottom: 0.5rem;
+  transition: color 200ms var(--ease-out);
+}
+
+.check:hover {
+  color: #fff;
 }
 
 .radio input,
 .check input {
-  accent-color: var(--link);
+  accent-color: var(--signal);
   margin: 0;
 }
 
@@ -208,7 +379,7 @@ select {
   padding-top: 0.15rem;
 }
 
-/* 凭据清除区：虚线分隔把它与上面的字段区区分开，两点破坏性动作各自带一句状态说明。 */
+/* 凭据清除区：虚线分隔把它与上面的字段区区分开，两个破坏性动作各自带一句状态说明。 */
 .credential-actions {
   display: flex;
   flex-direction: column;
@@ -233,99 +404,293 @@ select {
 
 /* ---- 主区 ---------------------------------------------------------------- */
 
-/* 与侧栏之间的分隔线：两块内容在宽屏上并排铺满后，需要一条明确的边界才不糊成一片。
+/* 与侧栏之间的分隔线：两块内容并排铺满后需要一条明确边界才不糊成一片。
    线放在主区左侧而不是侧栏右侧，窄屏退化成单列时可以整条换成横向分隔。 */
 .main {
   border-left: 1px solid var(--line);
-  padding-left: 2.2rem;
+  padding-left: 2rem;
+}
+
+.console-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
 }
 
 .console-kicker {
-  margin: 0 0 0.55rem;
-  color: var(--link-soft);
-  font-size: 0.85rem;
+  margin: 0 0 0.35rem;
+  color: var(--signal-soft);
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
 }
 
 .console-title {
   margin: 0;
-  font-size: clamp(2.15rem, 5vw, 3.6rem);
-  font-weight: 520;
+  font-size: clamp(1.8rem, 2.4vw, 2.6rem);
+  font-weight: 560;
   letter-spacing: -0.035em;
 }
 
 .console-lead {
-  max-width: 660px;
-  margin: 0.35rem 0 1.65rem;
-  color: #abc5d0;
+  max-width: 34rem;
+  margin: 0 0 0.3rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+  text-align: right;
 }
+
+/* 两列读数区：左列是地址读数与动作，右列是 DNS 与定时状态。
+   窄屏退化成单列（见文末媒体查询）。 */
+.console-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+/* 面板：主区里的每个功能块共用同一种表面。hover 只加亮边框与内描边，不上浮 ——
+   整块面板移动会带走鼠标焦点，反而不好点。 */
+.panel {
+  position: relative;
+  padding: 1.05rem 1.15rem 1.15rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(14, 34, 51, 0.55), rgba(7, 19, 32, 0.72));
+  transition:
+    border-color 260ms var(--ease-out),
+    box-shadow 260ms var(--ease-out);
+}
+
+/* 面板顶边的信号线：静止时几乎不可见，hover 时从左侧扫出，是面板级的"通电"反馈。 */
+.panel::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--signal), rgba(53, 208, 240, 0));
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 420ms var(--ease-out);
+}
+
+.panel:hover {
+  border-color: #265f7a;
+  box-shadow:
+    0 26px 50px -40px rgba(0, 0, 0, 0.9),
+    inset 0 0 0 1px rgba(53, 208, 240, 0.07);
+}
+
+.panel:hover::before {
+  transform: scaleX(1);
+}
+
+.panel-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 0.85rem;
+}
+
+/* ---- 读数窗：整页的签名元素 ---------------------------------------------- */
 
 .ip-focus {
   position: relative;
   overflow: hidden;
-  min-height: 180px;
+  flex: 1 1 auto;
+  min-height: clamp(140px, 19vh, 190px);
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  padding: clamp(1.3rem, 4vw, 2.3rem);
-  border: 1px solid #2a5770;
-  border-left: 4px solid var(--link);
-  background: linear-gradient(105deg, #0d2232 0%, #0a1825 72%);
+  /* 右列状态面板比它高时它会跟着撑高（两列等高）。读数窗被拉高后不能把内容挤在正中：
+     标签顶到上沿、时间贴到下沿，地址落在中间，空出来的部分就成了刻度的留白。 */
+  justify-content: space-between;
+  gap: 0.45rem;
+  padding: clamp(1.1rem, 2.2vh, 1.7rem) clamp(1.2rem, 1.6vw, 1.9rem);
+  border: 1px solid #23536c;
+  /* 多层背景：右上角辉光 + 主体斜向渐变 + 底部刻度尺（每 14px 一根刻度线）
+     + 十字准线。读数窗被拉高时，准线把中间的空档变成取景框，而不是一块空白。 */
+  background-image:
+    radial-gradient(120% 150% at 100% 0%, rgba(53, 208, 240, 0.14), transparent 58%),
+    linear-gradient(160deg, #0c2230 0%, #061220 74%),
+    repeating-linear-gradient(
+      90deg,
+      rgba(53, 208, 240, 0.32) 0 1px,
+      transparent 1px 14px
+    ),
+    linear-gradient(
+      90deg,
+      transparent calc(50% - 0.5px),
+      rgba(53, 208, 240, 0.12) calc(50% - 0.5px) calc(50% + 0.5px),
+      transparent calc(50% + 0.5px)
+    ),
+    linear-gradient(
+      180deg,
+      transparent calc(50% - 0.5px),
+      rgba(53, 208, 240, 0.12) calc(50% - 0.5px) calc(50% + 0.5px),
+      transparent calc(50% + 0.5px)
+    );
+  background-position:
+    0 0,
+    0 0,
+    0 100%,
+    0 0,
+    0 0;
+  background-size:
+    auto,
+    auto,
+    100% 6px,
+    100% 100%,
+    100% 100%;
+  background-repeat: no-repeat;
+  transition:
+    border-color 260ms var(--ease-out),
+    box-shadow 260ms var(--ease-out);
 }
 
+/* 扫描线：读数窗是"活的"，一条极淡的横线缓慢下扫。幅度压得很低，
+   只在余光里提示这是实时读数，不参与阅读。 */
 .ip-focus::after {
   content: "";
   position: absolute;
-  width: 240px;
-  height: 240px;
-  right: -100px;
-  top: -110px;
-  border: 1px solid rgba(56, 200, 232, 0.22);
-  border-radius: 50%;
-  box-shadow:
-    0 0 0 34px rgba(56, 200, 232, 0.035),
-    0 0 0 70px rgba(56, 200, 232, 0.025);
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 42%;
+  /* 两端都要回到透明：只在一端收尾会在扫描带下沿留下一条硬边，看起来像渲染错误。 */
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(53, 208, 240, 0.06) 42%,
+    rgba(151, 233, 250, 0.12) 50%,
+    transparent
+  );
+  pointer-events: none;
+  animation: readout-scan 7s linear infinite;
+}
+
+@keyframes readout-scan {
+  from {
+    transform: translateY(-60%);
+  }
+  to {
+    transform: translateY(260%);
+  }
+}
+
+/* 四角框标：一个元素画四个 L 形角，用 8 层背景渐变拼出来，不额外加 DOM。 */
+.readout-frame {
+  position: absolute;
+  inset: 9px;
+  --tick: 16px;
+  --frame: rgba(53, 208, 240, 0.55);
+  pointer-events: none;
+  opacity: 0.6;
+  background-image:
+    linear-gradient(var(--frame), var(--frame)),
+    linear-gradient(var(--frame), var(--frame)),
+    linear-gradient(var(--frame), var(--frame)),
+    linear-gradient(var(--frame), var(--frame)),
+    linear-gradient(var(--frame), var(--frame)),
+    linear-gradient(var(--frame), var(--frame)),
+    linear-gradient(var(--frame), var(--frame)),
+    linear-gradient(var(--frame), var(--frame));
+  background-position:
+    left top,
+    left top,
+    right top,
+    right top,
+    left bottom,
+    left bottom,
+    right bottom,
+    right bottom;
+  background-size:
+    var(--tick) 1px,
+    1px var(--tick),
+    var(--tick) 1px,
+    1px var(--tick),
+    var(--tick) 1px,
+    1px var(--tick),
+    var(--tick) 1px,
+    1px var(--tick);
+  background-repeat: no-repeat;
+  transition: opacity 300ms var(--ease-out);
+}
+
+.ip-focus:hover {
+  border-color: var(--signal-dim);
+  box-shadow: inset 0 0 60px -20px rgba(53, 208, 240, 0.22);
+}
+
+.ip-focus:hover .readout-frame {
+  opacity: 1;
 }
 
 .ip-label {
-  color: #89adbc;
-  font-size: 0.82rem;
-  margin-bottom: 0.55rem;
+  color: #8fb3c2;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
 }
 
 .ip-value {
   position: relative;
   z-index: 1;
   color: #eafcff;
-  font: 500 clamp(1.15rem, 3vw, 2.25rem) / 1.25 "Cascadia Code", "SFMono-Regular",
-    Consolas, monospace;
+  font: 500 clamp(1.1rem, 1.7vw, 2rem) / 1.25 var(--font-mono);
+  font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
+  transition: text-shadow 300ms var(--ease-out);
+}
+
+.ip-focus:hover .ip-value {
+  text-shadow: 0 0 26px rgba(53, 208, 240, 0.55);
 }
 
 .ip-meta {
-  color: #78cfe1;
-  font-size: 0.8rem;
-  margin-top: 0.75rem;
+  color: #7cc8dc;
+  font-size: 0.78rem;
+  transition: color 260ms var(--ease-out);
+}
+
+.ip-focus:hover .ip-meta {
+  color: var(--signal-soft);
 }
 
 .actions {
   display: grid;
   grid-template-columns: 1fr 1fr 1.25fr;
-  gap: 0.75rem;
-  margin-top: 1.4rem;
+  gap: 0.7rem;
 }
 
 .section-title {
-  margin: 2.4rem 0 0.9rem;
-  font-size: 1.3rem;
-  font-weight: 590;
-  letter-spacing: -0.03em;
+  margin: 1.6rem 0 0.7rem;
+  font-size: 0.82rem;
+  font-weight: 650;
+  letter-spacing: 0.16em;
+  color: var(--muted-strong);
 }
+
+/* 面板里的第一个标题、以及和按钮同行的标题，都不需要上方留白。 */
+.panel > .section-title:first-child,
+.section-head .section-title {
+  margin-top: 0;
+}
+
+/* ---- 指标网格 ------------------------------------------------------------ */
 
 .metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0 1.2rem;
   border-top: 1px solid var(--line);
+}
+
+.metrics-pair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .metrics-compact {
@@ -333,40 +698,86 @@ select {
 }
 
 .metric {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  padding: 1rem 0 1rem 1.15rem;
+  gap: 0.2rem;
+  padding: 0.8rem 0 0.8rem 1rem;
   border-left: 1px solid var(--line);
+  transition: background 260ms var(--ease-out);
+}
+
+/* 指标 hover：顶部抽出一条青色指示线，数值提亮发光。
+   这是全页重复出现最多的 hover 反馈，因此做得最克制 —— 只此两处变化。 */
+.metric::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--signal), rgba(53, 208, 240, 0));
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 360ms var(--ease-out);
+}
+
+.metric:hover {
+  background: linear-gradient(180deg, rgba(53, 208, 240, 0.08), transparent);
+}
+
+.metric:hover::before {
+  transform: scaleX(1);
+}
+
+.metric-wide {
+  grid-column: 1 / -1;
 }
 
 .metric-label {
-  color: #86a5b3;
-  font-size: 0.82rem;
+  color: var(--muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  transition: color 260ms var(--ease-out);
+}
+
+.metric:hover .metric-label {
+  color: var(--signal-soft);
 }
 
 .metric-value {
   color: var(--text);
-  font-size: 1.18rem;
+  font-size: 1.16rem;
   font-weight: 500;
   overflow-wrap: anywhere;
+  transition: text-shadow 260ms var(--ease-out);
+}
+
+.metric:hover .metric-value {
+  text-shadow: 0 0 20px rgba(53, 208, 240, 0.45);
 }
 
 .caption {
   margin: 0.6rem 0 0;
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.78rem;
 }
 
 /* ---- 提示条 -------------------------------------------------------------- */
 
 .notice {
-  margin: 1.1rem 0 0;
-  padding: 0.65rem 0.9rem;
+  margin: 1rem 0 0;
+  padding: 0.6rem 0.9rem;
   border-left: 3px solid var(--warning);
+  border-radius: 0 4px 4px 0;
   background: rgba(246, 166, 64, 0.07);
   color: #d7c19f;
   font-size: 0.86rem;
+  transition: background 220ms var(--ease-out);
+}
+
+.notice:hover {
+  background: rgba(246, 166, 64, 0.12);
 }
 
 .notice.is-error {
@@ -375,49 +786,102 @@ select {
   color: #f3c0b8;
 }
 
+.notice.is-error:hover {
+  background: rgba(255, 138, 122, 0.14);
+}
+
 .notice.is-success {
   border-left-color: var(--success);
   background: rgba(95, 224, 168, 0.08);
   color: #b7f0d7;
 }
 
+.notice.is-success:hover {
+  background: rgba(95, 224, 168, 0.14);
+}
+
 /* ---- 按钮 ---------------------------------------------------------------- */
 
 .btn {
-  min-height: 2.8rem;
+  position: relative;
+  overflow: hidden;
+  min-height: 2.7rem;
   padding: 0.4rem 1rem;
-  border-radius: 4px;
   border: 1px solid #2e637b;
-  background: var(--panel-strong);
+  border-radius: 4px;
+  background: var(--panel-2);
   color: #e7faff;
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+  transition:
+    border-color 200ms var(--ease-out),
+    background 200ms var(--ease-out),
+    color 200ms var(--ease-out),
+    transform 140ms var(--ease-out),
+    box-shadow 200ms var(--ease-out);
+}
+
+/* 掠过式高光：hover 时一道斜光从左扫到右，给点击前一个明确的"通电"感。
+   伪元素不接收事件，按钮的点击区域不受影响。 */
+.btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 32%,
+    rgba(151, 233, 250, 0.24) 50%,
+    transparent 68%
+  );
+  transform: translateX(-130%);
+  transition: transform 620ms var(--ease-out);
+  pointer-events: none;
 }
 
 .btn:hover:not(:disabled) {
-  border-color: var(--link);
+  border-color: var(--signal);
+  background: #12374c;
   color: #fff;
-  background: #13364a;
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px -16px rgba(53, 208, 240, 0.7);
+}
+
+.btn:hover:not(:disabled)::after {
+  transform: translateX(130%);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: none;
 }
 
 .btn:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: progress;
 }
 
 .btn-primary {
-  background: #14405a;
-  border-color: var(--link);
+  border-color: var(--signal);
+  background: linear-gradient(180deg, #17516f, #103c56);
+  box-shadow: inset 0 1px 0 rgba(151, 233, 250, 0.22);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #1d6b90, #134b6a);
+  box-shadow:
+    0 14px 28px -16px rgba(53, 208, 240, 0.85),
+    inset 0 1px 0 rgba(151, 233, 250, 0.3);
 }
 
 .btn-block {
   width: 100%;
+  margin-top: 1rem;
 }
 
 /* 侧栏里的小尺寸按钮：不抢主按钮的视觉权重。 */
 .btn-small {
-  min-height: 2.05rem;
+  min-height: 2rem;
   padding: 0.2rem 0.7rem;
   font-size: 0.8rem;
   font-weight: 500;
@@ -435,6 +899,7 @@ select {
   border-color: var(--danger);
   background: #33191f;
   color: #ffe1db;
+  box-shadow: 0 12px 24px -16px rgba(255, 138, 122, 0.8);
 }
 
 .btn-row {
@@ -446,31 +911,82 @@ select {
 
 /* ---- 检查记录表格 -------------------------------------------------------- */
 
-.table-wrap {
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  /* 标题行与下面的指标网格之间留一口气，网格自带的 border-top 才是唯一的分隔线。 */
+  padding-bottom: 0.7rem;
+}
+
+/* 记录面板跟随两列读数区，需要自己补上间距。 */
+.panel-history {
   margin-top: 1rem;
-  overflow-x: auto;
+}
+
+.section-head .btn {
+  min-height: 2.1rem;
+  padding: 0.2rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.table-wrap {
+  margin-top: 0.9rem;
+  overflow: auto;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: 5px;
+  background: rgba(5, 13, 22, 0.5);
+  transition: border-color 260ms var(--ease-out);
+}
+
+.table-wrap:hover {
+  border-color: #265f7a;
 }
 
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.86rem;
+  font-size: 0.82rem;
   white-space: nowrap;
 }
 
 th,
 td {
-  padding: 0.55rem 0.8rem;
+  padding: 0.52rem 0.8rem;
   text-align: left;
   border-bottom: 1px solid var(--line);
 }
 
+/* 表头吸附在滚动容器顶部：浮层里翻长表时列名不跟着滚走。 */
 th {
-  color: var(--link-soft);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  color: var(--signal-soft);
   font-weight: 600;
-  background: #0b1a27;
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+  background: #0a1a27;
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+
+tbody tr {
+  transition: background 180ms var(--ease-out);
+}
+
+tbody tr:hover {
+  background: linear-gradient(90deg, rgba(53, 208, 240, 0.11), rgba(53, 208, 240, 0.015));
+}
+
+tbody tr:hover td {
+  color: var(--text);
+}
+
+/* 行 hover 时最左侧压一条信号条，替代整行反白，读表时视线不被拉走。 */
+tbody tr:hover td:first-child {
+  box-shadow: inset 3px 0 0 var(--signal);
 }
 
 tbody tr:last-child td {
@@ -484,52 +1000,78 @@ td:last-child {
   color: var(--muted);
 }
 
+/* 结果列用色点 + 文字：颜色不是唯一线索，色觉障碍下仍读得出成功/失败。 */
+td.is-failed,
+td.is-succeeded {
+  font-weight: 600;
+}
+
+td.is-failed::before,
+td.is-succeeded::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 0.45rem;
+  border-radius: 50%;
+  vertical-align: 1px;
+}
+
 td.is-failed {
   color: var(--danger);
+}
+
+td.is-failed::before {
+  background: var(--danger);
+  box-shadow: 0 0 10px rgba(255, 138, 122, 0.8);
 }
 
 td.is-succeeded {
   color: var(--success);
 }
 
+td.is-succeeded::before {
+  background: var(--success);
+  box-shadow: 0 0 10px rgba(95, 224, 168, 0.8);
+}
+
 /* ---- 检查记录浮层 -------------------------------------------------------- */
-
-/* 标题与「查看全部」按钮同处一行。 */
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin: 2.4rem 0 0.9rem;
-}
-
-/* 外边距上移到 .section-head，标题在 flex 行里不再自带上下间距。 */
-.section-head .section-title {
-  margin: 0;
-}
 
 dialog {
   /* 宽度跟视口走但封顶，高度由内容决定并留出边距，避免浮层顶到屏幕边缘。 */
-  width: min(1100px, calc(100vw - 2rem));
+  width: min(1180px, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
   padding: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-soft);
   border-radius: 6px;
-  background: var(--panel);
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
   color: var(--text);
+  box-shadow: 0 40px 90px -50px rgba(0, 0, 0, 1);
+}
+
+dialog[open] {
+  animation: overlay-in 300ms var(--ease-out);
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
 }
 
 /* ::backdrop 属于作者样式，不在 CSP 对 UA 样式表的豁免范围内，必须写在这里。 */
 dialog::backdrop {
-  background: rgba(3, 10, 16, 0.72);
+  background: rgba(3, 10, 16, 0.76);
+  backdrop-filter: blur(3px);
 }
 
 .overlay-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.9rem;
+  gap: 0.85rem;
   max-height: calc(100vh - 2rem);
-  padding: 1.1rem 1.2rem 1.3rem;
+  padding: 1.1rem 1.2rem 1.25rem;
 }
 
 .overlay-head {
@@ -537,11 +1079,13 @@ dialog::backdrop {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--line);
 }
 
 .overlay-title {
   margin: 0;
-  font-size: 1.15rem;
+  font-size: 1.1rem;
   font-weight: 590;
   letter-spacing: -0.03em;
 }
@@ -550,10 +1094,12 @@ dialog::backdrop {
   margin: 0;
 }
 
-/* 面板高度被 max-height 限住后，让表格这一块滚动，标题与翻页按钮始终留在视野里。 */
+/* 面板高度被 max-height 限住后，让表格这一块滚动，标题与翻页按钮始终留在视野里。
+   min-height:0 是必需的：flex 子项默认不收缩，表格会被撑出容器。 */
 .overlay-panel .table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
   margin-top: 0;
-  overflow: auto;
 }
 
 .overlay-pager {
@@ -585,7 +1131,226 @@ summary {
 }
 
 :focus-visible {
-  outline: 3px solid rgba(56, 200, 232, 0.35);
+  outline: 2px solid rgba(53, 208, 240, 0.65);
+}
+
+/* 宽屏：主区拆两列，整页锁在视口高度内。
+   1440p 及更高分辨率下全部信息一屏装完，不出现页面滚动条；
+   万一内容仍超出（窗口被压得很矮），退化为主区内部滚动，页面本身依旧不滚。 */
+@media (min-width: 1400px) {
+  body {
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .shell {
+    height: 100dvh;
+    grid-template-rows: minmax(0, 1fr);
+    padding: 1.4rem 1.7rem;
+  }
+
+  .sidebar {
+    max-height: 100%;
+    overflow-y: auto;
+  }
+
+  .main {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding-right: 0.4rem;
+  }
+
+  .console-grid {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  /* 侧栏以外的空间全部留给主读数区：屏幕越高，读数窗越高，而不是在页面底部堆一块空白。
+     高度封顶 40rem，超高分屏上不至于把地址撑成半屏高。 */
+  .console-grid {
+    flex: 1 1 auto;
+    max-height: 40rem;
+  }
+
+  /* 状态面板里两组读数（DNS / 定时检查）分列上下，多出来的空隙落在中间，
+     读起来像两排独立的表头，而不是下方悬着一块空。 */
+  .panel-status {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+}
+
+/* 视口不够高时的第一档压缩：砍掉纯装饰的高度，字号与留白各退一步。 */
+@media (min-width: 1400px) and (max-height: 1080px) {
+  .shell {
+    padding: 1.1rem 1.4rem;
+  }
+
+  .console-title {
+    font-size: 1.9rem;
+  }
+
+  .ip-focus {
+    min-height: 132px;
+    padding: 1rem 1.3rem;
+  }
+
+  .metric {
+    padding: 0.62rem 0 0.62rem 0.9rem;
+  }
+
+  .metric-value {
+    font-size: 1.06rem;
+  }
+
+  th,
+  td {
+    padding: 0.42rem 0.7rem;
+  }
+
+  .table-wrap {
+    margin-top: 0.7rem;
+  }
+
+  .section-title {
+    margin: 1.2rem 0 0.55rem;
+  }
+}
+
+/* 第二档：150% 缩放（CSS 视口约 870px 高）时仍要一屏装下，只留必要的信息间距。 */
+@media (min-width: 1400px) and (max-height: 920px) {
+  .shell {
+    padding: 0.9rem 1.2rem;
+  }
+
+  .console-head {
+    padding-bottom: 0.7rem;
+  }
+
+  .console-title {
+    font-size: 1.6rem;
+  }
+
+  .console-lead {
+    font-size: 0.8rem;
+  }
+
+  .console-grid {
+    margin-top: 0.7rem;
+  }
+
+  .panel {
+    padding: 0.8rem 0.9rem 0.9rem;
+  }
+
+  .panel-readout {
+    gap: 0.7rem;
+    padding: 0.7rem;
+  }
+
+  .ip-focus {
+    min-height: 108px;
+  }
+
+  .ip-value {
+    font-size: 1.35rem;
+  }
+
+  .btn {
+    min-height: 2.35rem;
+  }
+
+  .metric {
+    padding: 0.5rem 0 0.5rem 0.8rem;
+  }
+
+  .metric-value {
+    font-size: 1rem;
+  }
+
+  .section-title {
+    margin: 0.95rem 0 0.45rem;
+  }
+
+  table {
+    font-size: 0.78rem;
+  }
+
+  th,
+  td {
+    padding: 0.34rem 0.6rem;
+  }
+}
+
+/* 第三档：175% 缩放（CSS 视口约 760px 高）仍要一屏装下。
+   到这里已经从"留白"退到"只保信息"，任何一档都不删内容，只压间距与字号。 */
+@media (min-width: 1400px) and (max-height: 820px) {
+  .shell {
+    padding: 0.7rem 1rem;
+  }
+
+  .console-title {
+    font-size: 1.4rem;
+  }
+
+  .console-grid {
+    margin-top: 0.55rem;
+    gap: 0.7rem;
+  }
+
+  .panel {
+    padding: 0.65rem 0.75rem 0.75rem;
+  }
+
+  .panel-readout {
+    gap: 0.55rem;
+    padding: 0.55rem;
+  }
+
+  .ip-focus {
+    min-height: 92px;
+    padding: 0.8rem 1rem;
+  }
+
+  .ip-value {
+    font-size: 1.2rem;
+  }
+
+  .btn {
+    min-height: 2.15rem;
+  }
+
+  .metric {
+    padding: 0.4rem 0 0.4rem 0.7rem;
+  }
+
+  .metric-value {
+    font-size: 0.95rem;
+  }
+
+  .section-title {
+    margin: 0.7rem 0 0.35rem;
+  }
+
+  .caption {
+    margin-top: 0.4rem;
+    font-size: 0.72rem;
+  }
+
+  table {
+    font-size: 0.74rem;
+  }
+
+  th,
+  td {
+    padding: 0.28rem 0.55rem;
+  }
+
+  .table-wrap {
+    margin-top: 0.55rem;
+  }
 }
 
 @media (max-width: 1080px) {
@@ -604,7 +1369,17 @@ summary {
     border-left: none;
     border-top: 1px solid var(--line);
     padding-left: 0;
-    padding-top: 1.8rem;
+    padding-top: 1.6rem;
+  }
+
+  .console-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .console-lead {
+    text-align: left;
   }
 
   .metrics,
@@ -624,12 +1399,13 @@ summary {
   }
 
   .metrics,
-  .metrics-compact {
+  .metrics-compact,
+  .metrics-pair {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .ip-focus {
-    min-height: 150px;
+    min-height: 132px;
   }
 }
 

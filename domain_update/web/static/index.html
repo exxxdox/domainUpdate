@@ -15,10 +15,12 @@
   <body>
     <div class="shell">
       <aside class="sidebar">
-        <h1 class="sidebar-title">连接设置</h1>
-        <p class="sidebar-hint">
-          密钥留空会保留当前值，页面不会回显已保存的密钥。
-        </p>
+        <div class="sidebar-head">
+          <h1 class="sidebar-title">连接设置</h1>
+          <p class="sidebar-hint">
+            密钥留空会保留当前值，页面不会回显已保存的密钥。
+          </p>
+        </div>
 
         <form id="settings-form" novalidate>
           <section class="card">
@@ -202,116 +204,133 @@
       </aside>
 
       <main class="main">
-        <p class="console-kicker">公网链路状态</p>
-        <h1 class="console-title">IPv6 域名控制台</h1>
-        <p class="console-lead">
-          查看公网地址与 DNS 指向，在地址变化时立即同步解析记录。
-        </p>
+        <header class="console-head">
+          <div class="console-heading">
+            <p class="console-kicker">公网链路状态</p>
+            <h1 class="console-title">IPv6 域名控制台</h1>
+          </div>
+          <p class="console-lead">
+            查看公网地址与 DNS 指向，在地址变化时立即同步解析记录。
+          </p>
+        </header>
 
-        <section class="ip-focus" aria-label="当前公网 IPv6">
-          <div class="ip-label">当前公网 IPv6</div>
-          <div class="ip-value" id="ip-value">等待检测</div>
-          <div class="ip-meta">
-            最近检测：<span id="ip-checked-at">尚未执行</span>
+        <!-- 宽屏下主区拆成两列：左侧是地址读数与动作，右侧是 DNS 与定时检查状态。
+             目的是把纵向高度换成横向，1440p 一屏内装得下全部信息，不需要页面滚动。 -->
+        <div class="console-grid">
+          <section class="panel panel-readout" aria-label="当前公网 IPv6">
+            <div class="ip-focus">
+              <!-- 仪表角标是纯装饰，用背景渐变画，不引入额外请求与内联样式。 -->
+              <span class="readout-frame" aria-hidden="true"></span>
+              <div class="ip-label">当前公网 IPv6</div>
+              <div class="ip-value" id="ip-value">等待检测</div>
+              <div class="ip-meta">
+                最近检测：<span class="num" id="ip-checked-at">尚未执行</span>
+              </div>
+            </div>
+
+            <div class="actions">
+              <button class="btn" id="detect-button" type="button">
+                检测公网 IPv6
+              </button>
+              <button class="btn" id="dns-button" type="button">查询 DNS 记录</button>
+              <button class="btn btn-primary" id="update-button" type="button">
+                检查并更新
+              </button>
+            </div>
+
+            <p class="notice" id="action-notice" hidden></p>
+          </section>
+
+          <section class="panel panel-status">
+            <h2 class="section-title">DNS 状态</h2>
+            <div class="metrics metrics-pair">
+              <div class="metric">
+                <span class="metric-label">当前服务商</span>
+                <span class="metric-value" id="dns-provider">—</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">解析记录</span>
+                <span class="metric-value num" id="dns-record">—</span>
+              </div>
+              <div class="metric metric-wide">
+                <span class="metric-label">记录值</span>
+                <span class="metric-value num" id="dns-value">—</span>
+              </div>
+            </div>
+            <p class="caption">
+              最近查询：<span class="num" id="dns-checked-at">尚未执行</span>
+            </p>
+
+            <h2 class="section-title">定时检查</h2>
+            <div class="metrics metrics-pair">
+              <div class="metric">
+                <span class="metric-label">运行状态</span>
+                <span class="metric-value" id="schedule-state">—</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">检查间隔</span>
+                <span class="metric-value num" id="schedule-interval">—</span>
+              </div>
+              <div class="metric metric-wide">
+                <span class="metric-label">下次检查</span>
+                <span class="metric-value num" id="schedule-next">—</span>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel panel-history">
+          <div class="section-head">
+            <h2 class="section-title">检查记录报告</h2>
+            <button type="button" class="btn" id="history-open">查看全部</button>
+          </div>
+
+          <div class="metrics metrics-compact">
+            <div class="metric">
+              <span class="metric-label">检查次数</span>
+              <span class="metric-value num" id="history-total">0</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">成功</span>
+              <span class="metric-value num" id="history-succeeded">0</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">失败</span>
+              <span class="metric-value num" id="history-failed">0</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">地址变更</span>
+              <span class="metric-value num" id="history-changed">0</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">最近变更</span>
+              <span class="metric-value num" id="history-last-change">—</span>
+            </div>
+          </div>
+          <p class="caption" id="history-caption"></p>
+
+          <p class="notice" id="history-error" hidden></p>
+          <p class="notice" id="history-empty" hidden>
+            暂无检查记录：执行一次「检查并更新」或等待定时任务运行后，这里会汇总每次检查的时间、来源与结果。
+          </p>
+
+          <div class="table-wrap" id="history-table-wrap" hidden>
+            <table id="history-table">
+              <thead>
+                <tr>
+                  <th scope="col">时间</th>
+                  <th scope="col">来源</th>
+                  <th scope="col">结果</th>
+                  <th scope="col">动作</th>
+                  <th scope="col">检测到的 IPv6</th>
+                  <th scope="col">变更前记录值</th>
+                  <th scope="col">说明</th>
+                </tr>
+              </thead>
+              <tbody id="history-body"></tbody>
+            </table>
           </div>
         </section>
-
-        <div class="actions">
-          <button class="btn" id="detect-button" type="button">
-            检测公网 IPv6
-          </button>
-          <button class="btn" id="dns-button" type="button">查询 DNS 记录</button>
-          <button class="btn btn-primary" id="update-button" type="button">
-            检查并更新
-          </button>
-        </div>
-
-        <p class="notice" id="action-notice" hidden></p>
-
-        <h2 class="section-title">DNS 状态</h2>
-        <div class="metrics">
-          <div class="metric">
-            <span class="metric-label">当前服务商</span>
-            <span class="metric-value" id="dns-provider">—</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">解析记录</span>
-            <span class="metric-value" id="dns-record">—</span>
-          </div>
-          <div class="metric metric-wide">
-            <span class="metric-label">记录值</span>
-            <span class="metric-value" id="dns-value">—</span>
-          </div>
-        </div>
-        <p class="caption">
-          最近查询：<span id="dns-checked-at">尚未执行</span>
-        </p>
-
-        <h2 class="section-title">定时检查</h2>
-        <div class="metrics">
-          <div class="metric">
-            <span class="metric-label">运行状态</span>
-            <span class="metric-value" id="schedule-state">—</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">检查间隔</span>
-            <span class="metric-value" id="schedule-interval">—</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">下次检查</span>
-            <span class="metric-value" id="schedule-next">—</span>
-          </div>
-        </div>
-
-        <div class="section-head">
-          <h2 class="section-title">检查记录报告</h2>
-          <button type="button" class="btn" id="history-open">查看全部</button>
-        </div>
-        <div class="metrics metrics-compact">
-          <div class="metric">
-            <span class="metric-label">检查次数</span>
-            <span class="metric-value" id="history-total">0</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">成功</span>
-            <span class="metric-value" id="history-succeeded">0</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">失败</span>
-            <span class="metric-value" id="history-failed">0</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">地址变更</span>
-            <span class="metric-value" id="history-changed">0</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">最近变更</span>
-            <span class="metric-value" id="history-last-change">—</span>
-          </div>
-        </div>
-        <p class="caption" id="history-caption"></p>
-
-        <p class="notice" id="history-error" hidden></p>
-        <p class="notice" id="history-empty" hidden>
-          暂无检查记录：执行一次「检查并更新」或等待定时任务运行后，这里会汇总每次检查的时间、来源与结果。
-        </p>
-
-        <div class="table-wrap" id="history-table-wrap" hidden>
-          <table id="history-table">
-            <thead>
-              <tr>
-                <th scope="col">时间</th>
-                <th scope="col">来源</th>
-                <th scope="col">结果</th>
-                <th scope="col">动作</th>
-                <th scope="col">检测到的 IPv6</th>
-                <th scope="col">变更前记录值</th>
-                <th scope="col">说明</th>
-              </tr>
-            </thead>
-            <tbody id="history-body"></tbody>
-          </table>
-        </div>
       </main>
     </div>
 
