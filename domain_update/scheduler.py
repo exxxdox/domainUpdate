@@ -68,7 +68,8 @@ class UpdateScheduler:
             return Result.success("定时检查已启用", self.snapshot())
 
     def _run_check(self) -> None:
-        result = DomainUpdateService().check_and_update()
+        # 标记来源，页面的检查记录报告才能区分定时与手动执行。
+        result = DomainUpdateService().check_and_update(source="scheduled")
         with self._lock:
             self._last_run = datetime.now().astimezone()
             self._last_ok = result.ok

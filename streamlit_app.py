@@ -8,6 +8,7 @@ import streamlit as st
 
 # 后端适配集中在这里：页面不依赖具体实现细节，便于服务层演进时只改一处。
 from domain_update.config import AppConfig, ConfigStore
+from domain_update.history import DEFAULT_MAX_RECORDS, CheckHistoryStore, summarize
 from domain_update.scheduler import get_scheduler
 from domain_update.service import DomainUpdateService
 
@@ -16,6 +17,21 @@ PROVIDER_LABELS = {
     "cloudflare": "Cloudflare",
     "alibaba": "阿里云",
 }
+
+# 检查记录里来源与动作都存英文枚举，展示时统一在这里翻译，避免页面散落 if。
+HISTORY_SOURCE_LABELS = {
+    "scheduled": "定时",
+    "manual": "手动",
+    "cli": "命令行",
+}
+HISTORY_ACTION_LABELS = {
+    "created": "创建记录",
+    "updated": "更新记录",
+    "unchanged": "无变化",
+    "failed": "失败",
+}
+# 表格只展示最近若干条，汇总仍基于全部已保留记录。
+HISTORY_PAGE_SIZE = 50
 
 FIELD_NAMES = {
     "provider": ("provider", "dns_provider"),
@@ -199,6 +215,40 @@ def format_time(value: Any) -> str:
     return str(value) if value else "尚未执行"
 
 
+def load_check_history() -> tuple[list[Any], str]:
+    """报告读取失败不应拖垮页面其他部分，所以返回 (记录, 错误提示)。"""
+    try:
+        result = CheckHistoryStore().load()
+    except Exception as exc:
+        return [], f"检查记录读取失败：{exc}"
+    if not getattr(result, "ok", False):
+        return [], result_text(result, "message", default="检查记录读取失败")
+    return list(getattr(result, "data", None) or []), ""
+
+
+def history_rows(records: list[Any], limit: int) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for record in records[:limit]:
+        action = str(_read_value(record, "action", default=""))
+        is_ok = bool(_read_value(record, "ok", default=False))
+        previous_value = _read_value(record, "previous_value", default=None)
+        rows.append(
+            {
+                "时间": format_time(_read_value(record, "timestamp", default=None)),
+                "来源": HISTORY_SOURCE_LABELS.get(
+                    str(_read_value(record, "source", default="")), "未知"
+                ),
+                "结果": "成功" if is_ok else "失败",
+                # 失败的检查没有对记录做任何动作，显示“—”而不是重复一遍“失败”。
+                "动作": HISTORY_ACTION_LABELS.get(action, "—") if is_ok else "—",
+                "检测到的 IPv6": str(_read_value(record, "ipv6", default="")) or "—",
+                "变更前记录值": str(previous_value) if previous_value else "无记录",
+                "说明": str(_read_value(record, "message", default="")),
+            }
+        )
+    return rows
+
+
 st.set_page_config(
     page_title="IPv6 域名控制台",
     page_icon="⌁",
@@ -234,9 +284,54 @@ st.markdown(
     }
     [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
     [data-testid="stSidebar"] label { color: #c5dce5; }
+    /* 侧栏分组标题：四组设置共用同款小标题，末尾渐隐分隔线让标题与内容自成一块。 */
+    [data-testid="stSidebar"] .side-heading {
+        display: flex;
+        align-items: center;
+        gap: .6rem;
+        margin: .35rem 0 .7rem;
+        color: var(--link-soft);
+        font-size: .76rem;
+        font-weight: 650;
+        letter-spacing: .16em;
+    }
+    [data-testid="stSidebar"] .side-heading::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(90deg, var(--line), transparent);
+    }
+    /* 折叠分组的标题（已保存凭据 / 更新通知）改成与普通分组标题一致的排版，四组才像同一类东西。 */
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary p {
+        color: var(--link-soft) !important;
+        font-size: .76rem;
+        font-weight: 650;
+        letter-spacing: .16em;
+    }
+    /* 四个分组容器统一卡片化：同底色 + 左侧强调线 + 组间留白，防止控件在侧栏里连成一片。 */
+    [data-testid="stSidebar"] .st-key-provider_fields,
+    [data-testid="stSidebar"] [data-testid="stExpander"],
+    [data-testid="stSidebar"] .st-key-schedule_group {
+        border: 1px solid var(--line) !important;
+        border-left: 3px solid var(--link) !important;
+        border-radius: 4px;
+        background: #0b1a27 !important;
+        margin-bottom: .95rem;
+    }
+    /* 侧栏 form 只承担「一次性提交」职责，边框与内边距交给四个分组卡片，否则会出现卡片套卡片。 */
+    [data-testid="stSidebar"] div[data-testid="stForm"] {
+        border: none !important;
+        padding: 0 !important;
+        background: transparent !important;
+    }
+    /* 隐藏 Streamlit 工具栏里的 Deploy 按钮：它指向 Streamlit Community Cloud，自托管部署下无用且占位。 */
+    [data-testid="stAppDeployButton"] { display: none !important; }
+    /* 页头默认自带主题底色（#0e1117），与画布底色不一致会在顶部留下一条色带，改为透明让画布背景透出。 */
+    header[data-testid="stHeader"] { background: transparent !important; }
     .block-container {
         max-width: 1320px;
-        padding-top: 2.2rem;
+        /* 顶部留白必须大于页头 stHeader 的固定高度（3.75rem），否则首屏第一个元素会被页头遮住。 */
+        padding-top: 4.6rem;
         padding-bottom: 4rem;
     }
     h1, h2, h3 { color: var(--text) !important; letter-spacing: -.035em; }
@@ -333,7 +428,8 @@ st.markdown(
     }
     hr { border-color: var(--line) !important; }
     @media (max-width: 700px) {
-        .block-container { padding: 1.2rem 1rem 3rem; }
+        /* 移动端同样要预留页头高度，避免标题被遮。 */
+        .block-container { padding: 4.2rem 1rem 3rem; }
         .ip-focus { min-height: 150px; }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -384,6 +480,8 @@ with st.sidebar:
     current_provider = str(_config_value(config, "provider", "cloudflare")).lower()
     if current_provider in {"aliyun", "alicloud"}:
         current_provider = "alibaba"
+    # 分组标题：侧栏四组设置各有一个同款小标题，避免所有控件连成一片难以分辨。
+    st.markdown('<div class="side-heading">服务商与凭据</div>', unsafe_allow_html=True)
     # 服务商置于 form 外，使切换后立即显示对应字段，但不会触发任何网络请求。
     provider = st.radio(
         "DNS 服务商",
@@ -394,53 +492,57 @@ with st.sidebar:
     )
 
     with st.form("settings_form", clear_on_submit=False):
-        if provider == "cloudflare":
-            cloudflare_token = st.text_input(
-                "API Token",
-                type="password",
-                placeholder="留空以保留当前值",
-            )
-            cloudflare_zone_id = st.text_input(
-                "Zone ID",
-                value=str(_config_value(config, "cloudflare_zone_id")),
-            )
-            cloudflare_record_name = st.text_input(
-                "完整域名",
-                value=str(_config_value(config, "cloudflare_record_name")),
-                placeholder="home.example.com",
-            )
-            alibaba_access_key_id = str(_config_value(config, "alibaba_access_key_id"))
-            alibaba_access_key_secret = ""
-            alibaba_record_id = str(_config_value(config, "alibaba_record_id"))
-            alibaba_rr = str(_config_value(config, "alibaba_rr"))
-            alibaba_ip_type = str(_config_value(config, "alibaba_ip_type", "AAAA"))
-        else:
-            alibaba_access_key_id = st.text_input(
-                "AccessKey ID",
-                value=str(_config_value(config, "alibaba_access_key_id")),
-            )
-            alibaba_access_key_secret = st.text_input(
-                "AccessKey Secret",
-                type="password",
-                placeholder="留空以保留当前值",
-            )
-            alibaba_record_id = st.text_input(
-                "解析记录 ID",
-                value=str(_config_value(config, "alibaba_record_id")),
-            )
-            alibaba_rr = st.text_input(
-                "主机记录",
-                value=str(_config_value(config, "alibaba_rr")),
-                placeholder="home",
-            )
-            alibaba_ip_type = st.selectbox(
-                "记录类型",
-                ["AAAA"],
-                index=0,
-            )
-            cloudflare_token = ""
-            cloudflare_zone_id = str(_config_value(config, "cloudflare_zone_id"))
-            cloudflare_record_name = str(_config_value(config, "cloudflare_record_name"))
+        # 服务商字段自带卡片，与另外三个分组平级；form 自身的边框在侧栏里已置空，避免卡片套卡片。
+        with st.container(border=True, key="provider_fields"):
+            if provider == "cloudflare":
+                cloudflare_token = st.text_input(
+                    "API Token",
+                    type="password",
+                    placeholder="留空以保留当前值",
+                )
+                cloudflare_zone_id = st.text_input(
+                    "Zone ID",
+                    value=str(_config_value(config, "cloudflare_zone_id")),
+                )
+                cloudflare_record_name = st.text_input(
+                    "完整域名",
+                    value=str(_config_value(config, "cloudflare_record_name")),
+                    placeholder="home.example.com",
+                )
+                alibaba_access_key_id = str(_config_value(config, "alibaba_access_key_id"))
+                alibaba_access_key_secret = ""
+                alibaba_record_id = str(_config_value(config, "alibaba_record_id"))
+                alibaba_rr = str(_config_value(config, "alibaba_rr"))
+                alibaba_ip_type = str(_config_value(config, "alibaba_ip_type", "AAAA"))
+            else:
+                alibaba_access_key_id = st.text_input(
+                    "AccessKey ID",
+                    value=str(_config_value(config, "alibaba_access_key_id")),
+                )
+                alibaba_access_key_secret = st.text_input(
+                    "AccessKey Secret",
+                    type="password",
+                    placeholder="留空以保留当前值",
+                )
+                alibaba_record_id = st.text_input(
+                    "解析记录 ID",
+                    value=str(_config_value(config, "alibaba_record_id")),
+                )
+                alibaba_rr = st.text_input(
+                    "主机记录",
+                    value=str(_config_value(config, "alibaba_rr")),
+                    placeholder="home",
+                )
+                alibaba_ip_type = st.selectbox(
+                    "记录类型",
+                    ["AAAA"],
+                    index=0,
+                )
+                cloudflare_token = ""
+                cloudflare_zone_id = str(_config_value(config, "cloudflare_zone_id"))
+                cloudflare_record_name = str(
+                    _config_value(config, "cloudflare_record_name")
+                )
 
         with st.expander("已保存凭据"):
             st.caption("当前服务商必须保留有效凭据；切换后可以清除另一家的密钥。")
@@ -466,18 +568,21 @@ with st.sidebar:
             )
             clear_gotify = st.checkbox("清除已保存的 Gotify 配置")
 
-        st.markdown("### 定时检查")
-        schedule_enabled = st.toggle(
-            "启用定时检查",
-            value=bool(_config_value(config, "schedule_enabled", False)),
-        )
-        schedule_interval_minutes = st.number_input(
-            "检查间隔（分钟）",
-            min_value=1,
-            max_value=10_080,
-            value=max(1, int(_config_value(config, "schedule_interval_minutes", 10) or 10)),
-            disabled=not schedule_enabled,
-        )
+        # 定时检查单独成卡片：与上面两个折叠分组用同一套外观，视觉上互不粘连。
+        # 带 key 便于 CSS 精确命中该卡片，避免用宽泛的 border wrapper 选择器影响侧栏其他容器。
+        with st.container(border=True, key="schedule_group"):
+            st.markdown('<div class="side-heading">定时检查</div>', unsafe_allow_html=True)
+            schedule_enabled = st.toggle(
+                "启用定时检查",
+                value=bool(_config_value(config, "schedule_enabled", False)),
+            )
+            schedule_interval_minutes = st.number_input(
+                "检查间隔（分钟）",
+                min_value=1,
+                max_value=10_080,
+                value=max(1, int(_config_value(config, "schedule_interval_minutes", 10) or 10)),
+                disabled=not schedule_enabled,
+            )
 
         save_clicked = st.form_submit_button("保存设置", use_container_width=True)
 
@@ -648,6 +753,39 @@ schedule_col, interval_col, next_col = st.columns(3)
 schedule_col.metric("运行状态", "已启用" if schedule_active else "已关闭")
 interval_col.metric("检查间隔", f"{schedule_interval} 分钟" if schedule_active else "—")
 next_col.metric("下次检查", format_time(next_run) if schedule_active else "—")
+
+st.markdown("## 检查记录报告")
+history_records, history_error = load_check_history()
+if history_error:
+    st.markdown(
+        f'<div class="status-note">{history_error}</div>', unsafe_allow_html=True
+    )
+history_summary = summarize(history_records)
+total_col, ok_col, failed_col, changed_col, last_change_col = st.columns(5)
+total_col.metric("检查次数", str(history_summary.total))
+ok_col.metric("成功", str(history_summary.succeeded))
+failed_col.metric("失败", str(history_summary.failed))
+changed_col.metric("地址变更", str(history_summary.changed))
+last_change_col.metric("最近变更", format_time(history_summary.last_change_at))
+st.caption(
+    f"最近一次检查：{format_time(history_summary.last_run_at)}；"
+    f"记录最多保留 {DEFAULT_MAX_RECORDS} 条，超出后自动丢弃最旧的记录。"
+)
+
+if history_records:
+    st.dataframe(
+        history_rows(history_records, HISTORY_PAGE_SIZE),
+        use_container_width=True,
+        hide_index=True,
+    )
+    if len(history_records) > HISTORY_PAGE_SIZE:
+        st.caption(f"表格仅展示最近 {HISTORY_PAGE_SIZE} 条，共 {len(history_records)} 条。")
+else:
+    st.markdown(
+        '<div class="status-note">暂无检查记录：执行一次「检查并更新」或等待定时任务运行后，'
+        "这里会汇总每次检查的时间、来源与结果。</div>",
+        unsafe_allow_html=True,
+    )
 
 if st.session_state.config_error:
     st.info("尚未读取到已保存的设置，请在左侧完成首次配置。")
