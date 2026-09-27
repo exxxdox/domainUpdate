@@ -1,0 +1,19 @@
+# 凭据只应在运行时注入，禁止进入构建上下文及镜像层。
+.env
+.env.*
+
+# 排除本地虚拟环境、版本库和工具缓存，缩小构建上下文并避免污染镜像。
+.git
+.gitignore
+.codegraph
+.venv
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 测试及本地持久化数据不属于运行镜像。
+tests/
+data/
+.data/
