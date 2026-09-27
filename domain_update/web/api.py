@@ -53,9 +53,14 @@ CLEAR_FLAGS = {
     "gotify_token": "clear_gotify",
 }
 
+# AppConfig 里只有这两个字段不是文本；其余字段统一按文本归一，
+# 否则请求体给出数字/null 会一路传到 config.validate() 的 .strip() 上抛
+# AttributeError，被 handle() 的兜底分支当成服务端故障报成 500。
+_NON_TEXT_FIELDS = frozenset({"schedule_enabled", "check_interval_minutes"})
+
 JSON_CONTENT_TYPE = "application/json"
 
-# HTTP 接口对外使用可读命名，配置文件与旧环境变量保留历史拼写（CLOUDFARE_*、CHECK_INTERVAL_*）。
+# HTTP 接口对外使用可读命名，配置文件里保留历史拼写（cloudfare_*、check_interval_*）。
 # 读写两个方向都从这张表派生：一旦某侧改成硬编码，同一字段就会在请求与响应里叫不同名字。
 _API_NAME_FOR_APP_FIELD = {
     "cloudfare_token": "cloudflare_token",
@@ -139,7 +144,11 @@ def build_config(current: AppConfig, body: Mapping[str, Any]) -> AppConfig:
                 continue
             updates[name] = text
             continue
-        updates[name] = value.strip() if isinstance(value, str) else value
+        if name in _NON_TEXT_FIELDS:
+            updates[name] = value
+            continue
+        # 非文本字段已排除，这里统一产出 str：null 表示清空，其余类型转字符串。
+        updates[name] = "" if value is None else str(value).strip()
     # 复用 from_dict 完成 provider 白名单与间隔整数的校验，避免两套校验逻辑漂移。
     return AppConfig.from_dict({**asdict(current), **updates})
 
@@ -321,6 +330,28 @@ class WebApi:
             self._console.dns_checked_at = datetime.now().astimezone()
         return _success(self._state_payload(), result.message)
 
+    def _test_notification(self, body: Mapping[str, Any]) -> ApiResponse:
+        """用“已保存配置 + 表单当前值”发一条 Gotify 测试消息，不写配置。
+
+        页面的测试按钮必须能在保存前用，否则用户得先把可能写错的凭据存下来才能验证。
+        """
+        current, _error = self._load_config()
+        baseline = current if current is not None else AppConfig()
+        try:
+            config = build_config(baseline, body)
+        except (ValueError, TypeError, AttributeError) as error:
+            logger.warning("测试通知配置构建失败：%s", error)
+            return _failure(400, f"配置无效：{error}")
+
+        # 合并后仍缺字段属于用户输入问题（400），与上游发送失败（502）区分开。
+        if not config.gotify_address.strip() or not config.gotify_token.strip():
+            return _failure(400, "尚未填写 Gotify 地址或 Token，无法发送测试消息")
+
+        result = self._service.send_test_notification(config)
+        if not result.ok:
+            return _failure(502, result.message)
+        return _success(self._state_payload(), result.message)
+
     def _update(self, _body: Mapping[str, Any]) -> ApiResponse:
         result = self._service.check_and_update(source="manual")
         if not result.ok or result.data is None:
@@ -445,4 +476,5 @@ _ROUTES: dict[str, tuple[frozenset[str], str]] = {
     "/api/ipv6": (frozenset({"POST"}), "_detect_ipv6"),
     "/api/dns": (frozenset({"POST"}), "_query_dns"),
     "/api/update": (frozenset({"POST"}), "_update"),
+    "/api/notify/test": (frozenset({"POST"}), "_test_notification"),
 }

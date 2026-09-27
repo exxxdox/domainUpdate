@@ -47,9 +47,9 @@ body {
   /* 侧栏固定宽度，主区自适应；窄屏在媒体查询里退化为单列。 */
   grid-template-columns: 384px minmax(0, 1fr);
   gap: 2.2rem;
-  max-width: 1420px;
-  margin: 0 auto;
-  padding: 2.4rem 1.6rem 4rem;
+  /* 铺满视口：不再用 max-width + auto 居中，宽屏上左右留白只由 padding 决定。 */
+  width: 100%;
+  padding: 2.4rem 2rem 4rem;
 }
 
 /* ---- 侧栏：连接设置 ------------------------------------------------------ */
@@ -114,13 +114,35 @@ body {
   background: linear-gradient(90deg, var(--line), transparent);
 }
 
-/* details 的标题要可点击，移除默认三角并给出指针反馈。 */
-details.card > summary {
+/* 折叠标题（卡片级与卡片内二级共用同款标题样式）：可点击，并给出展开指示。 */
+summary.side-heading {
   cursor: pointer;
 }
 
-details.card > summary::-webkit-details-marker {
+summary.side-heading::-webkit-details-marker {
   display: none;
+}
+
+/* 指示箭头放在开头：末尾那条渐隐分隔线要占满剩余宽度，不能和箭头抢位置。 */
+summary.side-heading::before {
+  content: "▸";
+  flex: none;
+  color: var(--muted);
+  font-size: 0.9em;
+  letter-spacing: 0;
+}
+
+details[open] > summary.side-heading::before {
+  content: "▾";
+}
+
+/* 卡片内的二级折叠：与上方单选行之间补一条分隔，收起时也不显得两块挤在一起。 */
+.sub-panel {
+  border-top: 1px solid var(--line);
+}
+
+.sub-panel > summary.side-heading {
+  margin-top: 0.85rem;
 }
 
 .field {
@@ -186,7 +208,37 @@ select {
   padding-top: 0.15rem;
 }
 
+/* 凭据清除区：虚线分隔把它与上面的字段区区分开，两点破坏性动作各自带一句状态说明。 */
+.credential-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px dashed var(--line-soft);
+}
+
+.credential-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+}
+
+.field-state {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
 /* ---- 主区 ---------------------------------------------------------------- */
+
+/* 与侧栏之间的分隔线：两块内容在宽屏上并排铺满后，需要一条明确的边界才不糊成一片。
+   线放在主区左侧而不是侧栏右侧，窄屏退化成单列时可以整条换成横向分隔。 */
+.main {
+  border-left: 1px solid var(--line);
+  padding-left: 2.2rem;
+}
 
 .console-kicker {
   margin: 0 0 0.55rem;
@@ -363,6 +415,35 @@ select {
   width: 100%;
 }
 
+/* 侧栏里的小尺寸按钮：不抢主按钮的视觉权重。 */
+.btn-small {
+  min-height: 2.05rem;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* 破坏性动作（清除已保存凭据）用独立的警示配色，和普通按钮拉开距离。 */
+.btn-danger {
+  border-color: #6b3a3a;
+  background: #23161b;
+  color: #f3c0b8;
+}
+
+.btn-danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: #33191f;
+  color: #ffe1db;
+}
+
+.btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
 /* ---- 检查记录表格 -------------------------------------------------------- */
 
 .table-wrap {
@@ -434,6 +515,14 @@ summary {
 
   .sidebar {
     position: static;
+  }
+
+  /* 单列时两块内容上下排列，竖向分隔线改为横向，方向跟着布局走。 */
+  .main {
+    border-left: none;
+    border-top: 1px solid var(--line);
+    padding-left: 0;
+    padding-top: 1.8rem;
   }
 
   .metrics,

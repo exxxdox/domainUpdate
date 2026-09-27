@@ -7,12 +7,10 @@ import logging
 from domain_update.config import ConfigStore
 from domain_update.logging_setup import configure_logging
 from domain_update.scheduler import get_scheduler
-from domain_update.web.server import serve
+from domain_update.web.server import resolve_web_port, serve
 
 
 HOST = "0.0.0.0"
-# 容器内必须监听所有网卡端口映射才生效；对外暴露面由 compose 的端口绑定控制。
-PORT = 8501
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +20,10 @@ def main() -> int:
     configure_logging()
 
     store = ConfigStore()
-    logger.info("启动控制台：数据目录=%s 监听=%s:%s", store.data_dir, HOST, PORT)
+    # 端口先解析再打印：日志里的监听地址必须和真实端口一致，
+    # 否则 WEB_PORT 写错时，日志会指向一个根本没在监听的端口。
+    port = resolve_web_port()
+    logger.info("启动控制台：数据目录=%s 监听=%s:%s", store.data_dir, HOST, port)
 
     config_result = store.load()
     if config_result.ok and config_result.data is not None:
@@ -33,7 +34,7 @@ def main() -> int:
         # 不阻断启动：允许用户打开页面完成首次配置。
         logger.warning("未能恢复定时检查：%s", config_result.message)
 
-    return serve(host=HOST, port=PORT)
+    return serve(host=HOST, port=port)
 
 
 if __name__ == "__main__":

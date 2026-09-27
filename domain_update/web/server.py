@@ -8,14 +8,22 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import signal
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from domain_update.web.api import ApiResponse, WebApi
+
+
+DEFAULT_PORT = 8501
+# 端口是启动期参数，属于部署配置而不是应用配置：它不进配置文件，只走环境变量。
+WEB_PORT_ENV = "WEB_PORT"
+MIN_PORT = 1
+MAX_PORT = 65535
 
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -184,8 +192,36 @@ def install_stop_handler(server: ConsoleServer) -> None:
         logger.debug("当前不是主线程，跳过 SIGTERM 处理函数注册")
 
 
-def serve(host: str = "0.0.0.0", port: int = 8501) -> int:
+def resolve_web_port(env: Mapping[str, str] | None = None) -> int:
+    """解析 WEB_PORT；非法值退回默认端口并记一条警告。
+
+    端口写错不该让容器直接起不来：那时用户连页面都打不开，
+    也就看不到任何能帮他定位问题的提示。
+    """
+    source = os.environ if env is None else env
+    raw = (source.get(WEB_PORT_ENV) or "").strip()
+    if not raw:
+        return DEFAULT_PORT
+
+    def _fallback(reason: str) -> int:
+        logger.warning(
+            "%s=%s %s，改用默认端口 %s", WEB_PORT_ENV, raw, reason, DEFAULT_PORT
+        )
+        return DEFAULT_PORT
+
+    try:
+        port = int(raw)
+    except ValueError:
+        return _fallback("不是整数")
+    if not MIN_PORT <= port <= MAX_PORT:
+        return _fallback(f"不在 {MIN_PORT}-{MAX_PORT} 范围内")
+    return port
+
+
+def serve(host: str = "0.0.0.0", port: int | None = None) -> int:
     """启动控制台并阻塞，直到进程收到停止信号。"""
+    if port is None:
+        port = resolve_web_port()
     server = ConsoleServer((host, port), WebApi())
     install_stop_handler(server)
     logger.info("控制台已启动，监听 %s:%s", host, port)

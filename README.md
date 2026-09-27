@@ -83,25 +83,19 @@ uv run python launcher.py
 
 填写 Gotify 地址和 Token 后，DNS 记录创建或更新成功时会发送通知。地址可以包含 `http://` 或 `https://`；未填写协议时默认使用 HTTPS。
 
-## 兼容旧环境变量
+## 部署环境变量
 
-首次启动且尚无持久化配置时，程序会读取项目 `.env` 或容器环境变量并写入配置文件。之后以页面保存的配置为准。
+应用配置（服务商、凭据、定时检查、Gotify）只在页面里设置，并且只保存到数据目录的 `config.json`。程序不读取任何覆盖这些字段的环境变量，因此同一个字段不会有两个来源。
 
-| 环境变量 | 用途 |
-|---|---|
-| `DOMAIN_UPDATE_PROVIDER` | `cloudflare` 或 `alibaba` |
-| `DOMAIN_UPDATE_SCHEDULE_ENABLED` | 是否启用定时检查 |
-| `DOMAIN_UPDATE_CHECK_INTERVAL_MINUTES` | 检查间隔，最少 1 分钟 |
-| `CLOUDFARE_TOKEN` | Cloudflare API Token，保留旧拼写以兼容现有部署 |
-| `CLOUDFARE_ZONE_ID` | Cloudflare Zone ID |
-| `CLOUDFARE_RECORD_NAME` | Cloudflare 完整记录名 |
-| `ALIBABA_CLOUD_ACCESS_KEY_ID` | 阿里云 AccessKey ID |
-| `ALIBABA_CLOUD_ACCESS_KEY_SECRET` | 阿里云 AccessKey Secret |
-| `ALIBABA_CLOUD_RECORDID` | 阿里云解析记录 ID |
-| `ALIBABA_CLOUD_RR` | 阿里云主机记录 |
-| `ALIBABA_CLOUD_IPTYPE` | 记录类型，应为 `AAAA` |
-| `GOTIFY_ADDRESS` | Gotify 地址 |
-| `GOTIFY_TOKEN` | Gotify Token |
+只有下面三项属于部署参数，通过环境变量传入：
+
+| 环境变量 | 默认值 | 用途 |
+|---|---|---|
+| `WEB_PORT` | `8501` | Web 页面监听端口，必须是 1-65535 的整数；非法值会记一条 WARNING 并退回默认端口 |
+| `DOMAIN_UPDATE_DATA_DIR` | `.data` | 数据目录，存放 `config.json` 与 `check_history.jsonl` |
+| `DOMAIN_UPDATE_LOG_LEVEL` | `INFO` | 日志级别，非法值退回 `INFO` |
+
+`compose.yaml` 以 `${WEB_PORT:-8501}` 传入端口，也可以直接改该文件里的值。
 
 ## HTTP 接口
 
@@ -116,6 +110,7 @@ uv run python launcher.py
 | `POST` | `/api/ipv6` | 检测公网 IPv6 |
 | `POST` | `/api/dns` | 查询当前 DNS 记录 |
 | `POST` | `/api/update` | 检查并更新，结果记入检查记录（来源为 `manual`） |
+| `POST` | `/api/notify/test` | 用「已保存配置 + 请求体当前值」发送一条 Gotify 测试消息，不写配置 |
 
 请求体字段名与响应中的字段名一致；`POST` 必须带 `Content-Type: application/json`。
 

@@ -48,10 +48,12 @@ COPY --chown=appuser:appuser . .
 
 USER appuser
 
+# 仅作说明，取默认端口；实际端口由 WEB_PORT 决定。
 EXPOSE 8501
 
 # 使用 Python 标准库检查控制台健康端点，避免额外安装 curl。
+# 端口必须跟 WEB_PORT 走，否则改了端口后容器会被自己的探活判成不健康。
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/healthz', timeout=3).read()"]
+    CMD ["python", "-c", "import os, urllib.request; port = os.environ.get('WEB_PORT', '8501'); urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=3).read()"]
 
 CMD ["python", "launcher.py"]

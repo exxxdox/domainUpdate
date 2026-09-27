@@ -373,6 +373,184 @@ def test_ipv6_endpoint_reports_failure(
     assert response.payload["message"] == "公网 IPv6 获取失败"
 
 
+@patch("domain_update.service.send_gotify")
+def test_notify_test_uses_saved_credentials(gotify: MagicMock, tmp_path: Path) -> None:
+    gotify.return_value = Result.success("通知已发送", True)
+    api = make_api(tmp_path)
+
+    response = post(api, "/api/notify/test")
+
+    assert response.status == 200
+    assert "测试消息已发送" in response.payload["message"]
+    sent_config = gotify.call_args.args[0]
+    # 表单留空时用已保存的配置发送：测试按钮不该强迫用户先保存一次。
+    assert sent_config.gotify_address == "notify.example.com"
+    assert sent_config.gotify_token == "gotify-token"
+
+
+@patch("domain_update.service.send_gotify")
+def test_notify_test_prefers_form_values_without_saving(
+    gotify: MagicMock, tmp_path: Path
+) -> None:
+    gotify.return_value = Result.success("通知已发送", True)
+    api = make_api(tmp_path)
+
+    response = post(
+        api,
+        "/api/notify/test",
+        {"gotify_address": "new.example.com", "gotify_token": "new-token"},
+    )
+
+    assert response.status == 200
+    sent_config = gotify.call_args.args[0]
+    assert sent_config.gotify_address == "new.example.com"
+    assert sent_config.gotify_token == "new-token"
+    # 测试只读不写：验证新凭据不得覆盖已保存的配置。
+    saved = ConfigStore(tmp_path).load().data
+    assert saved is not None
+    assert saved.gotify_token == "gotify-token"
+
+
+@patch("domain_update.service.send_gotify")
+def test_notify_test_keeps_saved_token_when_field_left_blank(
+    gotify: MagicMock, tmp_path: Path
+) -> None:
+    gotify.return_value = Result.success("通知已发送", True)
+    api = make_api(tmp_path)
+
+    post(
+        api,
+        "/api/notify/test",
+        {"gotify_address": "new.example.com", "gotify_token": "   "},
+    )
+
+    # 与保存配置同一条规则：密钥框留空表示“保留原值”，否则改地址就会误清 Token。
+    assert gotify.call_args.args[0].gotify_token == "gotify-token"
+
+
+@patch("domain_update.service.send_gotify")
+def test_notify_test_requires_configuration(gotify: MagicMock, tmp_path: Path) -> None:
+    store = ConfigStore(tmp_path)
+    store.save(
+        AppConfig(
+            cloudfare_token="secret-token",
+            cloudfare_zone_id="zone-id",
+            cloudfare_record_name="home.example.com",
+        )
+    )
+    api = WebApi(
+        service=DomainUpdateService(store), scheduler=StubScheduler(_snapshot())
+    )
+
+    response = post(api, "/api/notify/test")
+
+    # 缺配置是用户输入问题（400），不应被当成上游故障。
+    assert response.status == 400
+    assert "Gotify" in response.payload["message"]
+    gotify.assert_not_called()
+
+
+@patch("domain_update.service.send_gotify")
+def test_notify_test_reports_send_failure(gotify: MagicMock, tmp_path: Path) -> None:
+    gotify.return_value = Result.failure("Gotify 通知发送失败")
+    api = make_api(tmp_path)
+
+    response = post(api, "/api/notify/test")
+
+    # 发送失败是上游问题：502，且文案要贴合“测试消息”场景而不是“DNS 已更新”。
+    assert response.status == 502
+    assert "测试消息发送失败" in response.payload["message"]
+
+
+def test_config_save_survives_non_text_values(tmp_path: Path) -> None:
+    api = make_api(tmp_path)
+
+    response = post(
+        api, "/api/config", {"provider": "cloudflare", "cloudflare_zone_id": 123}
+    )
+
+    # 文本字段收到数字属于请求体问题，但绝不能一路传到 validate() 的 .strip()
+    # 上抛 AttributeError，被 handle() 兜底成 500（服务端故障）。
+    assert response.status == 200
+    saved = ConfigStore(tmp_path).load().data
+    assert saved is not None
+    assert saved.cloudfare_zone_id == "123"
+
+
+def test_config_save_treats_null_text_field_as_empty(tmp_path: Path) -> None:
+    api = make_api(tmp_path)
+
+    response = post(
+        api, "/api/config", {"provider": "cloudflare", "cloudflare_record_name": None}
+    )
+
+    # null 表示清空，而不是变成字符串 "None" 被当成一个域名存下去。
+    assert response.status == 400
+    saved = ConfigStore(tmp_path).load().data
+    assert saved is not None
+    assert saved.cloudfare_record_name == "home.example.com"
+
+
+@patch("domain_update.service.send_gotify")
+def test_notify_test_survives_non_text_address(
+    gotify: MagicMock, tmp_path: Path
+) -> None:
+    gotify.return_value = Result.success("通知已发送", True)
+    api = make_api(tmp_path)
+
+    response = post(api, "/api/notify/test", {"gotify_address": 123})
+
+    # 地址归一成字符串后仍然走正常发送流程，而不是 500。
+    assert response.status == 200
+    assert gotify.call_args.args[0].gotify_address == "123"
+
+
+@patch("domain_update.service.send_gotify")
+def test_notify_test_response_never_echoes_token(
+    gotify: MagicMock, tmp_path: Path
+) -> None:
+    gotify.return_value = Result.success("通知已发送", True)
+    api = make_api(tmp_path)
+
+    response = post(api, "/api/notify/test", {"gotify_token": "brand-new-token"})
+
+    # 新接口同样复用 _config_payload，密钥只能以 *_saved 布尔出现。
+    serialized = json.dumps(response.payload, ensure_ascii=False)
+    assert "brand-new-token" not in serialized
+    assert "gotify-token" not in serialized
+    assert response.payload["data"]["config"]["gotify_token_saved"] is True
+
+
+def test_notify_test_rejects_cross_site_origin(tmp_path: Path) -> None:
+    api = make_api(tmp_path)
+
+    response = api.handle(
+        "POST",
+        "/api/notify/test",
+        raw_body=b"{}",
+        headers={
+            "content-type": "application/json",
+            "host": "127.0.0.1:8501",
+            "origin": "http://evil.example.com",
+        },
+    )
+
+    assert response.status == 403
+
+
+def test_notify_test_requires_json_content_type(tmp_path: Path) -> None:
+    api = make_api(tmp_path)
+
+    response = api.handle(
+        "POST",
+        "/api/notify/test",
+        raw_body=b'{"gotify_address":"notify.example.com"}',
+        headers={"content-type": "text/plain", "host": "127.0.0.1:8501"},
+    )
+
+    assert response.status == 415
+
+
 def test_post_requires_json_content_type(tmp_path: Path) -> None:
     api = make_api(tmp_path)
 

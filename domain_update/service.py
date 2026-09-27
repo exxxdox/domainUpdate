@@ -40,6 +40,23 @@ class DomainUpdateService:
     def get_public_ipv6(self) -> Result[str]:
         return get_public_ipv6()
 
+    def send_test_notification(self, config: AppConfig) -> Result[bool]:
+        """发送一条测试通知，用于在保存前验证 Gotify 地址与 Token 是否可用。
+
+        故意不落盘：调用方传入的是“已保存配置 + 表单当前值”的合并结果，
+        用户可以先把新凭据测通再保存，避免把错误配置写进配置文件。
+        """
+        result = send_gotify(
+            config, "测试通知", "IPv6 域名控制台测试消息，收到即表示通知配置可用。"
+        )
+        # send_gotify 在未配置时返回成功但 sent=False；对“测试”场景这算失败，
+        # 用户点测试按钮就是要一条真实到达的消息。
+        if not result.ok or not result.data:
+            # 原消息是给“DNS 已更新”场景写的，这里换成测试场景的说明，原始原因留在日志。
+            logger.warning("Gotify 测试消息发送失败：%s", result.message)
+            return Result.failure("测试消息发送失败，请检查地址、Token 与网络连通性")
+        return Result.success("测试消息已发送，请在 Gotify 客户端确认是否收到", True)
+
     def get_dns_status(self) -> Result[DnsStatus]:
         config_result = self.load_config()
         if not config_result.ok or config_result.data is None:

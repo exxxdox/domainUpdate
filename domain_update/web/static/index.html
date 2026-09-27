@@ -24,7 +24,8 @@
           <section class="card">
             <h2 class="side-heading">服务商与凭据</h2>
 
-            <!-- 服务商切换只切换字段显示，不触发任何网络请求。 -->
+            <!-- 服务商切换只切换字段显示，不触发任何网络请求。
+                 单选行留在折叠区之外：凭据收起来之后，切换服务商仍然要能一眼操作。 -->
             <div class="field">
               <span class="field-label">DNS 服务商</span>
               <div class="radio-row" role="radiogroup" aria-label="DNS 服务商">
@@ -39,84 +40,106 @@
               </div>
             </div>
 
-            <div id="provider-cloudflare" class="provider-fields">
-              <div class="field">
-                <label for="cloudflare_token">API Token</label>
-                <input
-                  type="password"
-                  id="cloudflare_token"
-                  autocomplete="new-password"
-                  placeholder="留空以保留当前值"
-                />
-              </div>
-              <div class="field">
-                <label for="cloudflare_zone_id">Zone ID</label>
-                <input type="text" id="cloudflare_zone_id" autocomplete="off" />
-              </div>
-              <div class="field">
-                <label for="cloudflare_record_name">完整域名</label>
-                <input
-                  type="text"
-                  id="cloudflare_record_name"
-                  autocomplete="off"
-                  placeholder="home.example.com"
-                />
-              </div>
-            </div>
+            <details class="sub-panel">
+              <summary class="side-heading">服务商凭据</summary>
 
-            <div id="provider-alibaba" class="provider-fields" hidden>
-              <div class="field">
-                <label for="alibaba_access_key_id">AccessKey ID</label>
-                <input type="text" id="alibaba_access_key_id" autocomplete="off" />
+              <div id="provider-cloudflare" class="provider-fields">
+                <div class="field">
+                  <label for="cloudflare_token">API Token</label>
+                  <input
+                    type="password"
+                    id="cloudflare_token"
+                    autocomplete="new-password"
+                    placeholder="留空以保留当前值"
+                  />
+                </div>
+                <div class="field">
+                  <label for="cloudflare_zone_id">Zone ID</label>
+                  <input type="text" id="cloudflare_zone_id" autocomplete="off" />
+                </div>
+                <div class="field">
+                  <label for="cloudflare_record_name">完整域名</label>
+                  <input
+                    type="text"
+                    id="cloudflare_record_name"
+                    autocomplete="off"
+                    placeholder="home.example.com"
+                  />
+                </div>
               </div>
-              <div class="field">
-                <label for="alibaba_access_key_secret">AccessKey Secret</label>
-                <input
-                  type="password"
-                  id="alibaba_access_key_secret"
-                  autocomplete="new-password"
-                  placeholder="留空以保留当前值"
-                />
+
+              <div id="provider-alibaba" class="provider-fields" hidden>
+                <div class="field">
+                  <label for="alibaba_access_key_id">AccessKey ID</label>
+                  <input type="text" id="alibaba_access_key_id" autocomplete="off" />
+                </div>
+                <div class="field">
+                  <label for="alibaba_access_key_secret">AccessKey Secret</label>
+                  <input
+                    type="password"
+                    id="alibaba_access_key_secret"
+                    autocomplete="new-password"
+                    placeholder="留空以保留当前值"
+                  />
+                </div>
+                <div class="field">
+                  <label for="alibaba_record_id">解析记录 ID</label>
+                  <input type="text" id="alibaba_record_id" autocomplete="off" />
+                </div>
+                <div class="field">
+                  <label for="alibaba_rr">主机记录</label>
+                  <input
+                    type="text"
+                    id="alibaba_rr"
+                    autocomplete="off"
+                    placeholder="home"
+                  />
+                </div>
+                <div class="field">
+                  <label for="alibaba_ip_type">记录类型</label>
+                  <select id="alibaba_ip_type">
+                    <option value="AAAA">AAAA</option>
+                  </select>
+                </div>
               </div>
-              <div class="field">
-                <label for="alibaba_record_id">解析记录 ID</label>
-                <input type="text" id="alibaba_record_id" autocomplete="off" />
+
+              <!-- 清除按钮放在两家字段块之外：字段块只显示当前选中的服务商，
+                   而“清除另一家凭据”恰恰需要在没选中它的时候操作。
+                   初始 disabled：脚本首次读到状态前，页面无法说明凭据是否存在，
+                   而这三个按钮点下去就是不可撤销的删除。 -->
+              <div class="credential-actions">
+                <div class="credential-item">
+                  <button
+                    type="button"
+                    class="btn btn-small btn-danger"
+                    id="clear-cloudflare-token"
+                    disabled
+                  >
+                    清除 Cloudflare 凭据
+                  </button>
+                  <span class="field-state" id="cloudflare-token-state"></span>
+                </div>
+                <div class="credential-item">
+                  <button
+                    type="button"
+                    class="btn btn-small btn-danger"
+                    id="clear-alibaba-access-key-secret"
+                    disabled
+                  >
+                    清除阿里云凭据
+                  </button>
+                  <span class="field-state" id="alibaba-secret-state"></span>
+                </div>
               </div>
-              <div class="field">
-                <label for="alibaba_rr">主机记录</label>
-                <input
-                  type="text"
-                  id="alibaba_rr"
-                  autocomplete="off"
-                  placeholder="home"
-                />
-              </div>
-              <div class="field">
-                <label for="alibaba_ip_type">记录类型</label>
-                <select id="alibaba_ip_type">
-                  <option value="AAAA">AAAA</option>
-                </select>
-              </div>
-            </div>
+            </details>
           </section>
 
           <details class="card">
-            <summary class="side-heading">已保存凭据</summary>
-            <p class="card-hint">
-              当前服务商必须保留有效凭据；切换服务商后可以清除另一家的密钥。
-            </p>
-            <label class="check">
-              <input type="checkbox" id="clear_cloudflare_token" />
-              <span>清除 Cloudflare API Token</span>
-            </label>
-            <label class="check">
-              <input type="checkbox" id="clear_alibaba_access_key_secret" />
-              <span>清除阿里云 AccessKey Secret</span>
-            </label>
-          </details>
-
-          <details class="card">
             <summary class="side-heading">更新通知</summary>
+            <p class="card-hint">
+              Token 留空表示保留已保存的值；地址会被直接提交，清空即改用空地址。
+              测试消息按当前填写的内容发送，不会保存设置。
+            </p>
             <div class="field">
               <label for="gotify_address">Gotify 地址</label>
               <input
@@ -135,10 +158,20 @@
                 placeholder="留空以保留当前值"
               />
             </div>
-            <label class="check">
-              <input type="checkbox" id="clear_gotify" />
-              <span>清除已保存的 Gotify 配置</span>
-            </label>
+            <div class="btn-row">
+              <button type="button" class="btn btn-small" id="gotify-test-button">
+                发送测试消息
+              </button>
+              <button
+                type="button"
+                class="btn btn-small btn-danger"
+                id="clear-gotify"
+                disabled
+              >
+                清除已保存的 Token
+              </button>
+            </div>
+            <p class="notice" id="gotify-notice" hidden></p>
           </details>
 
           <section class="card">

@@ -99,6 +99,60 @@ function setBusy(button, busy, busyLabel) {
   }
 }
 
+/**
+ * 最近一次成功读到的配置。清除按钮的可用性由它决定，
+ * 而按钮态需要在 setBusy 结束之后再写一次（setBusy 退出时会启用按钮），
+ * 那时请求的返回值已经不在作用域里，所以留一份全局记录。
+ */
+let latestConfig = null;
+
+/** 按钮被禁用时必须在旁边写明原因，否则用户只看到一个点不动的按钮。 */
+function renderClearButton(buttonId, stateId, saved, inUse) {
+  const button = el(buttonId);
+  const state = el(stateId);
+  button.disabled = !saved || inUse;
+  if (!saved) {
+    state.textContent = "尚未保存凭据";
+  } else if (inUse) {
+    state.textContent = "当前服务商正在使用，需先切换服务商并保存";
+  } else {
+    state.textContent = "已保存凭据，可清除";
+  }
+  button.title = state.textContent;
+}
+
+/**
+ * 用服务端返回的配置刷新全部清除按钮；表单值本身不动。
+ * 清除动作成功后按 syncForm=false 刷新，靠这个函数把按钮态补齐，
+ * 否则会出现"凭据已经清掉了、按钮却还亮着"的假象。
+ *
+ * 传 null 时一律禁用：点这三个按钮就是一次不可撤销的删除，
+ * 而配置还没读到时页面根本无法说明"到底存没存过凭据"。
+ */
+function applyClearButtonState(config) {
+  const provider = config ? config.provider : "";
+  const cloudflareSaved = Boolean(config && config.cloudflare_token_saved);
+  const alibabaSaved = Boolean(config && config.alibaba_access_key_secret_saved);
+  const gotifySaved = Boolean(config && config.gotify_token_saved);
+
+  renderClearButton(
+    "clear-cloudflare-token",
+    "cloudflare-token-state",
+    cloudflareSaved,
+    provider === "cloudflare",
+  );
+  renderClearButton(
+    "clear-alibaba-access-key-secret",
+    "alibaba-secret-state",
+    alibabaSaved,
+    provider === "alibaba",
+  );
+  // Gotify 是可选通知渠道，没有“正在使用不可清除”的限制，只判断是否存过 Token。
+  const gotifyClear = el("clear-gotify");
+  gotifyClear.disabled = !gotifySaved;
+  gotifyClear.title = gotifySaved ? "清除已保存的 Token" : "尚未保存 Token";
+}
+
 function selectedProvider() {
   const checked = document.querySelector('input[name="provider"]:checked');
   return checked ? checked.value : "cloudflare";
@@ -110,9 +164,6 @@ function selectProvider(provider) {
   }
   el("provider-cloudflare").hidden = provider !== "cloudflare";
   el("provider-alibaba").hidden = provider !== "alibaba";
-  // 当前服务商的密钥是必填项，服务端会拒绝清空；这里同步禁用开关说明原因。
-  el("clear_cloudflare_token").disabled = provider === "cloudflare";
-  el("clear_alibaba_access_key_secret").disabled = provider === "alibaba";
 }
 
 function setActionsEnabled(enabled) {
@@ -146,13 +197,9 @@ function fillForm(config) {
   );
   applySecretHint("gotify_token", config.gotify_token_saved);
 
-  for (const id of [
-    "clear_cloudflare_token",
-    "clear_alibaba_access_key_secret",
-    "clear_gotify",
-  ]) {
-    el(id).checked = false;
-  }
+  // 上一次的测试结果在重新读取配置后已经过时。
+  clearNotice(el("gotify-notice"));
+  applyClearButtonState(config);
 }
 
 function renderIp(state) {
@@ -261,6 +308,7 @@ function renderHistory(state) {
  */
 function applyState(state, syncForm) {
   if (state.config) {
+    latestConfig = state.config;
     clearNotice(el("config-notice"));
     setActionsEnabled(true);
     if (syncForm) {
@@ -268,6 +316,10 @@ function applyState(state, syncForm) {
     }
   } else {
     setActionsEnabled(false);
+    // 配置读不到时必须锁住清除按钮：不知道存没存过凭据，
+    // 就不能让一次点击真的删掉它；同时清掉缓存避免 finally 里拿旧配置放行。
+    latestConfig = null;
+    applyClearButtonState(null);
   }
   if (state.config_error) {
     showNotice(el("config-notice"), `读取配置失败：${state.config_error}`, "error");
@@ -318,11 +370,6 @@ async function saveSettings(event) {
     provider: selectedProvider(),
     schedule_enabled: el("schedule_enabled").checked,
     schedule_interval_minutes: Number(el("schedule_interval_minutes").value || 10),
-    clear_cloudflare_token: el("clear_cloudflare_token").checked,
-    clear_alibaba_access_key_secret: el(
-      "clear_alibaba_access_key_secret",
-    ).checked,
-    clear_gotify: el("clear_gotify").checked,
   };
   for (const name of TEXT_FIELDS) {
     payload[name] = el(name).value;
@@ -338,6 +385,52 @@ async function saveSettings(event) {
     showNotice(el("config-notice"), envelope.message, "success");
   } catch (error) {
     showNotice(el("config-notice"), `保存失败：${error.message}`, "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+/**
+ * 清除某个已保存的密钥。
+ * 请求体只带清除标记：这是一次针对“已保存配置”的定向动作，带上表单当前值会顺带
+ * 保存用户还没确认的编辑，也会因为改了 provider 而让服务端的必填校验拦下整个请求。
+ * 提交后按 syncForm=false 刷新，表单保持原样，只有按钮状态跟着已保存配置更新。
+ */
+async function clearSecret(button, flag, noticeNode) {
+  clearNotice(noticeNode);
+  setBusy(button, true, "正在清除…");
+  const payload = {};
+  payload[flag] = true;
+  try {
+    const envelope = await request("POST", "/api/config", payload);
+    applyState(envelope.data, false);
+    showNotice(noticeNode, envelope.message, "success");
+  } catch (error) {
+    showNotice(noticeNode, `清除失败：${error.message}`, "error");
+  } finally {
+    setBusy(button, false);
+    // 必须在 setBusy 之后写按钮态：setBusy 退出时会启用按钮，
+    // 顺序反过来会让刚清空的凭据按钮重新亮起，像是还能再清一次。
+    applyClearButtonState(latestConfig);
+  }
+}
+
+/**
+ * 发送 Gotify 测试消息。只带通知相关的两个字段：
+ * 其他字段即使有问题也不该拦住一次通知连通性测试。
+ */
+async function testNotification(button) {
+  const notice = el("gotify-notice");
+  clearNotice(notice);
+  setBusy(button, true, "正在发送…");
+  try {
+    const envelope = await request("POST", "/api/notify/test", {
+      gotify_address: el("gotify_address").value,
+      gotify_token: el("gotify_token").value,
+    });
+    showNotice(notice, envelope.message, "success");
+  } catch (error) {
+    showNotice(notice, error.message, "error");
   } finally {
     setBusy(button, false);
   }
@@ -359,6 +452,27 @@ function init() {
   );
   el("update-button").addEventListener("click", () =>
     runAction(el("update-button"), "/api/update", "正在同步…"),
+  );
+  // 清除按钮就地生效：用户点了按钮就期望凭据被删掉，不该再要求一次“保存设置”。
+  el("clear-cloudflare-token").addEventListener("click", () =>
+    clearSecret(
+      el("clear-cloudflare-token"),
+      "clear_cloudflare_token",
+      el("config-notice"),
+    ),
+  );
+  el("clear-alibaba-access-key-secret").addEventListener("click", () =>
+    clearSecret(
+      el("clear-alibaba-access-key-secret"),
+      "clear_alibaba_access_key_secret",
+      el("config-notice"),
+    ),
+  );
+  el("gotify-test-button").addEventListener("click", () =>
+    testNotification(el("gotify-test-button")),
+  );
+  el("clear-gotify").addEventListener("click", () =>
+    clearSecret(el("clear-gotify"), "clear_gotify", el("gotify-notice")),
   );
   // 首次加载还没有配置，先禁用动作按钮，避免点了只拿到错误。
   setActionsEnabled(false);

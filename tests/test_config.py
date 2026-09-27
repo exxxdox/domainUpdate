@@ -3,21 +3,19 @@ from pathlib import Path
 from domain_update.config import AppConfig, ConfigStore
 
 
-def test_config_store_initializes_from_environment(
+def test_config_store_creates_default_file_on_first_run(
     tmp_path: Path, monkeypatch
 ) -> None:
+    # 配置只认配置文件：环境变量一律不再参与，否则同一个字段会有两个来源。
     monkeypatch.setenv("DOMAIN_UPDATE_PROVIDER", "alibaba")
-    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "key-id")
-    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "secret")
     monkeypatch.setenv("ALIBABA_CLOUD_RECORDID", "record-id")
-    monkeypatch.setenv("ALIBABA_CLOUD_RR", "home")
 
     result = ConfigStore(tmp_path).load()
 
     assert result.ok
     assert result.data is not None
-    assert result.data.provider == "alibaba"
-    assert result.data.alibaba_cloud_record_id == "record-id"
+    assert result.data == AppConfig()
+    # 首次启动就落一份默认配置，页面才能直接编辑并保存。
     assert (tmp_path / "config.json").exists()
 
 

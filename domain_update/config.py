@@ -9,9 +9,7 @@ import tempfile
 import threading
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
-from typing import Any, Mapping, cast
-
-from dotenv import load_dotenv
+from typing import Any, Mapping
 
 from domain_update.models import ProviderName, Result
 
@@ -20,19 +18,6 @@ CONFIG_FILENAME = "config.json"
 _CONFIG_LOCK = threading.RLock()
 
 logger = logging.getLogger(__name__)
-
-
-def _env_bool(value: str | None, default: bool) -> bool:
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _env_int(value: str | None, default: int) -> int:
-    try:
-        return int(value) if value is not None else default
-    except ValueError:
-        return default
 
 
 @dataclass(frozen=True)
@@ -50,41 +35,6 @@ class AppConfig:
     cloudfare_record_name: str = ""
     gotify_address: str = ""
     gotify_token: str = ""
-
-    @classmethod
-    def from_env(cls, env: Mapping[str, str] | None = None) -> "AppConfig":
-        source = os.environ if env is None else env
-        provider_value = source.get("DOMAIN_UPDATE_PROVIDER", "cloudflare").lower()
-        # 配置文件可能被手工修改，未知服务商安全回退，避免程序启动即崩溃。
-        provider: ProviderName = (
-            cast(ProviderName, provider_value)
-            if provider_value in {"cloudflare", "alibaba"}
-            else "cloudflare"
-        )
-        return cls(
-            provider=provider,
-            schedule_enabled=_env_bool(
-                source.get("DOMAIN_UPDATE_SCHEDULE_ENABLED"), False
-            ),
-            check_interval_minutes=max(
-                1, _env_int(source.get("DOMAIN_UPDATE_CHECK_INTERVAL_MINUTES"), 10)
-            ),
-            alibaba_cloud_access_key_id=source.get(
-                "ALIBABA_CLOUD_ACCESS_KEY_ID", ""
-            ),
-            alibaba_cloud_access_key_secret=source.get(
-                "ALIBABA_CLOUD_ACCESS_KEY_SECRET", ""
-            ),
-            alibaba_cloud_record_id=source.get("ALIBABA_CLOUD_RECORDID", ""),
-            alibaba_cloud_rr=source.get("ALIBABA_CLOUD_RR", ""),
-            alibaba_cloud_ip_type=source.get("ALIBABA_CLOUD_IPTYPE", "AAAA")
-            or "AAAA",
-            cloudfare_token=source.get("CLOUDFARE_TOKEN", ""),
-            cloudfare_zone_id=source.get("CLOUDFARE_ZONE_ID", ""),
-            cloudfare_record_name=source.get("CLOUDFARE_RECORD_NAME", ""),
-            gotify_address=source.get("GOTIFY_ADDRESS", ""),
-            gotify_token=source.get("GOTIFY_TOKEN", ""),
-        )
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "AppConfig":
@@ -147,13 +97,13 @@ class ConfigStore:
     def load(self) -> Result[AppConfig]:
         with self._lock:
             if not self.path.exists():
-                # 首次启动兼容旧部署的 .env，后续均以持久化配置为准。
-                load_dotenv()
-                config = AppConfig.from_env()
+                # 配置只此一处来源：首次启动直接落一份默认配置，
+                # 用户打开页面填入凭据即可，不再有"文件没写但环境变量生效"这种中间态。
+                config = AppConfig()
                 saved = self.save(config)
                 if not saved.ok:
                     return Result.failure(saved.message)
-                return Result.success("已从环境变量初始化配置", config)
+                return Result.success("已创建默认配置，请在页面中完成设置", config)
             try:
                 with self.path.open("r", encoding="utf-8") as stream:
                     raw = json.load(stream)
