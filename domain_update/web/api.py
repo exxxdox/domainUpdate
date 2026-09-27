@@ -243,6 +243,11 @@ class WebApi:
             body = self._parse_body(raw_body) if method == "POST" else {}
         except ValueError:
             return _failure(400, "请求体不是合法 JSON 对象")
+        except RecursionError:
+            # 嵌套深度超过解释器递归上限时，json.loads 抛的是 RecursionError 而不是
+            # ValueError。漏接它会一路穿透到 BaseHTTPRequestHandler：客户端拿不到任何
+            # 响应，只有连接被丢弃，堆栈也绕过统一日志直接打到 stderr。
+            return _failure(400, "请求体 JSON 嵌套层级过深")
 
         handler = getattr(self, handler_name)
         try:

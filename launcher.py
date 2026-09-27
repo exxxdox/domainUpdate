@@ -7,6 +7,7 @@ import logging
 from domain_update.config import ConfigStore
 from domain_update.logging_setup import configure_logging
 from domain_update.scheduler import get_scheduler
+from domain_update.thread_stack import configure_thread_stack
 from domain_update.web.server import resolve_web_port, serve
 
 
@@ -18,6 +19,9 @@ logger = logging.getLogger(__name__)
 def main() -> int:
     # 日志必须最先配置：连配置读取失败这类启动期问题也要能在 docker logs 里看到。
     configure_logging()
+    # 必须早于任何线程创建：下面的调度器线程和控制台的请求线程都在此之后才出现，
+    # 而 stack_size 只对调用之后新建的线程生效。
+    configure_thread_stack()
 
     store = ConfigStore()
     # 端口先解析再打印：日志里的监听地址必须和真实端口一致，

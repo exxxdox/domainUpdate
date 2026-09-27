@@ -7,6 +7,7 @@
 .gitignore
 .codegraph
 .venv
+.uv-cache
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -17,3 +18,9 @@ __pycache__/
 tests/
 data/
 .data/
+
+# 只服务于开发与部署编排的文件。运行阶段已改为显式 COPY 源码目录，
+# 这里再挡一次是为了防止以后有人改回 COPY . . 时把它们带进镜像。
+compose.yaml
+README.md
+script.sh

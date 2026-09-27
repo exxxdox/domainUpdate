@@ -615,6 +615,23 @@ def test_unknown_path_returns_404(tmp_path: Path) -> None:
     assert make_api(tmp_path).handle("GET", "/api/nope").status == 404
 
 
+def test_post_rejects_deeply_nested_json(tmp_path: Path) -> None:
+    """嵌套深度超过解释器递归上限的 JSON 必须回 400，而不是让异常穿透出去。
+
+    json.loads 在这种情况下抛的是 RecursionError 而不是 ValueError。漏接它会一路
+    穿透到 BaseHTTPRequestHandler：客户端拿不到任何响应，只有连接被丢弃，堆栈也绕过
+    统一日志直接打到 stderr。
+    """
+    api = make_api(tmp_path)
+    # 40000 字节，在服务端的 64KB 请求体上限之内，属于会被正常受理的请求。
+    raw_body = ("[" * 20_000 + "]" * 20_000).encode("utf-8")
+
+    response = api.handle("POST", "/api/ipv6", raw_body=raw_body, headers=JSON_HEADERS)
+
+    assert response.status == 400
+    assert response.payload["ok"] is False
+
+
 def test_wrong_method_returns_405(tmp_path: Path) -> None:
     api = make_api(tmp_path)
 

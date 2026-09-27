@@ -98,6 +98,12 @@ class _Handler(BaseHTTPRequestHandler):
     def _handle_api(self, method: str) -> None:
         raw_body = self._read_body()
         if raw_body is None:
+            # 超限时必须关掉连接：请求体还留在套接字里，HTTP/1.1 keep-alive 下这些字节
+            # 会被当成下一个请求的请求行解析，日志里出现 "code 414, message
+            # Request-URI Too Long"，之后这条连接上的请求全部错乱。
+            # 选择关闭而不是读掉，是因为 Content-Length 由客户端给出，读它等于让对端
+            # 决定我们在这里分配多少内存。
+            self.close_connection = True
             self._send_text(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Payload Too Large")
             return
         # 请求头原样交给 API 层：跨站校验需要 Origin/Host，内容类型校验需要 Content-Type。
@@ -160,6 +166,10 @@ class _Handler(BaseHTTPRequestHandler):
     def _send_common_headers(self) -> None:
         for name, value in SECURITY_HEADERS.items():
             self.send_header(name, value)
+        # close_connection 可能在处理过程中被置位（请求体超限那条路径），必须显式告知
+        # 客户端，否则它会继续在这条已经不再复用的连接上发请求。
+        if self.close_connection:
+            self.send_header("Connection", "close")
 
 
 class ConsoleServer(ThreadingHTTPServer):
