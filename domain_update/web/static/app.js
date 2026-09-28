@@ -63,6 +63,13 @@ async function request(method, path, body) {
   } catch (error) {
     payload = null;
   }
+  if (response.status === 401) {
+    // 会话过期。整页跳回登录页，比在按钮旁边显示「请先登录」清楚得多；
+    // 用 replace 而不是 assign，否则用户按返回键又回到这个已经失效的页面。
+    // 抛出让调用方的 finally 恢复按钮状态，避免停在「正在处理…」。
+    window.location.replace("/login.html");
+    throw new Error("登录已过期，请重新登录");
+  }
   if (!response.ok || payload === null || payload.ok !== true) {
     const message =
       payload && payload.message
@@ -511,6 +518,21 @@ async function testNotification(button) {
   }
 }
 
+/**
+ * 退出登录。服务端只回一个立即过期的同名 Cookie，没有别的事情要做，
+ * 因此无论请求成功与否都要回登录页：失败时留在控制台上什么也做不了，
+ * 而真正让令牌失效的手段是改环境变量里的口令。
+ */
+async function logout(button) {
+  setBusy(button, true, "正在退出…");
+  try {
+    await request("POST", "/api/logout");
+  } catch (error) {
+    // 故意忽略：下面无条件跳转，把失败信息显示在一个即将卸载的页面上没有意义。
+  }
+  window.location.replace("/login.html");
+}
+
 function init() {
   el("settings-form").addEventListener("submit", saveSettings);
   for (const radio of document.querySelectorAll('input[name="provider"]')) {
@@ -549,6 +571,7 @@ function init() {
   el("clear-gotify").addEventListener("click", () =>
     clearSecret(el("clear-gotify"), "clear_gotify", el("gotify-notice")),
   );
+  el("logout-button").addEventListener("click", () => logout(el("logout-button")));
   // 首次加载还没有配置，先禁用动作按钮，避免点了只拿到错误。
   setActionsEnabled(false);
   refresh(true);

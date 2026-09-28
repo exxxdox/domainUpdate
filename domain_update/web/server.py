@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Mapping
 
+from domain_update.auth import AuthGuard
 from domain_update.web.api import ApiResponse, WebApi
 
 
@@ -34,7 +35,16 @@ STATIC_FILES = {
     "/index.html": "index.html",
     "/app.css": "app.css",
     "/app.js": "app.js",
+    "/login.html": "login.html",
+    "/login.js": "login.js",
 }
+
+LOGIN_PAGE = "/login.html"
+# 未登录也能取到的静态资源。必须包含登录页自己的脚本与样式：它们在同一个页面上加载，
+# 挡住就会变成「登录页重定向到登录页」，浏览器报 ERR_TOO_MANY_REDIRECTS。
+_PUBLIC_STATIC = frozenset({LOGIN_PAGE, "/login.js", "/app.css"})
+# 会被浏览器当页面导航请求的两个入口，未登录时用 302 送到登录页。
+_PAGE_PATHS = frozenset({"/", "/index.html"})
 
 # 显式列出类型，不依赖 mimetypes：容器基础镜像里通常没有 /etc/mime.types，
 # 猜不出来时会把 .js 当成 text/plain，浏览器会拒绝执行。
@@ -62,6 +72,9 @@ SECURITY_HEADERS = {
 # 请求体上限：配置表单只有十来个短字段，超过这个量级一定是异常请求。
 MAX_BODY_BYTES = 64 * 1024
 
+# 本层自己决定、业务层不许覆盖的响应头。重复发同名头会让客户端拿到两个值。
+_RESERVED_HEADERS = frozenset({"content-type", "content-length", "connection"})
+
 logger = logging.getLogger(__name__)
 
 
@@ -88,10 +101,27 @@ class _Handler(BaseHTTPRequestHandler):
     def _handle(self, method: str) -> None:
         target = self.path.split("?", 1)[0]
         if _is_api_path(target):
+            # 接口的鉴权闸门在 WebApi.handle() 内部，那里才是读完请求体之后的位置。
             self._handle_api(method)
             return
         if method != "GET":
+            # 非 GET 的静态路径本来就不可能成功，先按 405 处理，与加鉴权之前完全一致。
             self._send_text(HTTPStatus.METHOD_NOT_ALLOWED, "Method Not Allowed")
+            return
+        authorized = self.server.api.is_authorized(dict(self.headers.items()))
+        if not authorized and target not in _PUBLIC_STATIC:
+            if target in _PAGE_PATHS:
+                # 页面导航：送登录页，用户直接就能输密码。
+                self._send_redirect(LOGIN_PAGE)
+            else:
+                # 其余是脚本/未知路径。给脚本请求回一个 HTML 页面会变成「返回 200 的
+                # 语法错误」，控制台里很难看懂；直接 401 更准确。顺带也不告诉匿名
+                # 调用方哪些文件存在。
+                self._send_text(HTTPStatus.UNAUTHORIZED, "Unauthorized")
+            return
+        if authorized and target == LOGIN_PAGE:
+            # 已登录还停在登录页，会让人以为没登进去，直接送回控制台。
+            self._send_redirect("/")
             return
         self._send_static(target)
 
@@ -108,7 +138,13 @@ class _Handler(BaseHTTPRequestHandler):
             return
         # 请求头原样交给 API 层：跨站校验需要 Origin/Host，内容类型校验需要 Content-Type。
         response = self.server.api.handle(
-            method, self.path, raw_body, dict(self.headers.items())
+            method,
+            self.path,
+            raw_body,
+            dict(self.headers.items()),
+            # 登录失败计数需要来源地址。不读 X-Forwarded-For：那个头由客户端提供，
+            # 随手改一下就能绕过限流；反代后面拿到的就是反代地址，属于已知误差。
+            client_ip=self.client_address[0] if self.client_address else None,
         )
         self._send_json(response)
 
@@ -128,6 +164,35 @@ class _Handler(BaseHTTPRequestHandler):
         body = json.dumps(response.payload, ensure_ascii=False).encode("utf-8")
         self.send_response(response.status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self._send_common_headers()
+        self._send_extra_headers(response.headers)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_extra_headers(self, headers: Mapping[str, str]) -> None:
+        """发出业务层给的额外响应头（Set-Cookie、Retry-After）。
+
+        放在 _send_common_headers() 之后，并挡掉本层已经决定过的名字：
+        同名头重复发出去，客户端的取值行为是未定义的。
+        """
+        reserved = _RESERVED_HEADERS | {name.lower() for name in SECURITY_HEADERS}
+        for name, value in headers.items():
+            if name.lower() in reserved:
+                logger.warning("忽略业务层试图覆盖的响应头：%s", name)
+                continue
+            self.send_header(name, value)
+
+    def _send_redirect(self, location: str) -> None:
+        """302 跳转。
+
+        必须走 _send_common_headers()：少了 Cache-Control: no-store，浏览器可能把这个
+        跳转缓存下来，用户登录成功后仍然被送回登录页，而且怎么刷新都好不了。
+        """
+        body = f"Redirecting to {location}".encode("utf-8")
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", location)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self._send_common_headers()
         self.end_headers()
@@ -228,11 +293,17 @@ def resolve_web_port(env: Mapping[str, str] | None = None) -> int:
     return port
 
 
-def serve(host: str = "0.0.0.0", port: int | None = None) -> int:
+def serve(
+    host: str = "0.0.0.0", port: int | None = None, auth: AuthGuard | None = None
+) -> int:
     """启动控制台并阻塞，直到进程收到停止信号。"""
     if port is None:
         port = resolve_web_port()
-    server = ConsoleServer((host, port), WebApi())
+    if auth is None:
+        # 未显式传入时从环境变量现取。launcher 会先配好日志再构造守卫并传进来，
+        # 这条兜底路径服务于直接调用 serve() 的场景，两者共用同一段读取逻辑。
+        auth = AuthGuard.from_env()
+    server = ConsoleServer((host, port), WebApi(auth=auth))
     install_stop_handler(server)
     logger.info("控制台已启动，监听 %s:%s", host, port)
     try:

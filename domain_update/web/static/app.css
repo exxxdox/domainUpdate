@@ -1454,6 +1454,39 @@ summary {
   }
 }
 
+/* 登录页。只有一张卡片，字段/按钮/提示都复用主界面已有的 .field/.btn/.notice。
+   不复用 .shell：它是写死的两栏栅格（384px + 1fr），单张卡片放进去会空掉一整列。 */
+.login-shell {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  /* 移动端浏览器地址栏会吃掉 100vh，dvh 才是真正可见的高度。 */
+  min-height: 100dvh;
+  padding: 24px 20px;
+}
+
+.login-card {
+  width: min(420px, 100%);
+  /* .card 默认按宽面板设计，登录卡片收紧一些，避免大留白。 */
+  padding: 28px 26px 30px;
+}
+
+.login-title {
+  margin: 0 0 6px;
+  font-size: 20px;
+  letter-spacing: 0.01em;
+}
+
+.login-hint {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.login-card .notice {
+  margin: 14px 0 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

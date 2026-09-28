@@ -11,11 +11,20 @@ CSP 静默丢弃（浏览器只把违规写进控制台，页面本身看不出�
 import re
 from pathlib import Path
 
+import pytest
+
 from domain_update.web.server import STATIC_DIR, STATIC_FILES
 
 INDEX_HTML = STATIC_DIR / "index.html"
 APP_JS = STATIC_DIR / "app.js"
 APP_CSS = STATIC_DIR / "app.css"
+LOGIN_HTML = STATIC_DIR / "login.html"
+LOGIN_JS = STATIC_DIR / "login.js"
+
+# 会被 CSP 丢弃的写法要逐文件扫。新增页面必须同时加到这里，否则契约静默失效。
+SCANNED_FILES = (INDEX_HTML, APP_JS, APP_CSS, LOGIN_HTML, LOGIN_JS)
+# 引用了哪些静态资源，就要在 STATIC_FILES 里登记哪些。
+HTML_ENTRIES = (INDEX_HTML, LOGIN_HTML)
 
 # el("some-id")：app.js 取元素 id 的唯一入口。
 _EL_CALL = re.compile(r"""\bel\(\s*["']([^"']+)["']\s*\)""")
@@ -52,7 +61,7 @@ def test_static_assets_have_no_inline_style_or_script() -> None:
     丢弃是静默的：页面只是「看起来没生效」，只有控制台里有 violation 记录。
     """
     offenders: list[str] = []
-    for path in (INDEX_HTML, APP_JS, APP_CSS):
+    for path in SCANNED_FILES:
         text = _read(path)
         for pattern, label in (
             (_INLINE_STYLE_ATTR, "内联 style 属性"),
@@ -75,4 +84,46 @@ def test_static_files_map_covers_referenced_assets() -> None:
 
     assert referenced <= set(STATIC_FILES), (
         f"STATIC_FILES 缺少：{sorted(referenced - set(STATIC_FILES))}"
+    )
+
+
+# ---- 登录页 ----------------------------------------------------------------
+
+
+def test_every_element_id_used_by_login_js_exists_in_login_html() -> None:
+    """login.js 用 el() 取 id，取不到就抛错，且抛在绑定提交监听器之前。
+
+    结果是登录页完全不响应点击，而控制台里只有一行 TypeError。
+    """
+    used = set(_EL_CALL.findall(_read(LOGIN_JS)))
+    defined = set(_ID_ATTR.findall(_read(LOGIN_HTML)))
+
+    assert used <= defined, f"login.html 缺少这些 id：{sorted(used - defined)}"
+
+
+def test_login_html_does_not_load_app_js() -> None:
+    """app.js 的 init() 从 el("settings-form") 开始，登录页没有这些 id，会直接抛错。"""
+    assert "/app.js" not in _read(LOGIN_HTML)
+
+
+def test_login_form_does_not_rely_on_native_submission() -> None:
+    """CSP 的 form-action 'none' 会拦掉原生提交。
+
+    症状同样是静默的：点「登录」什么都不发生。表单要么不写 action/method，
+    要么由脚本改成只读属性，这里直接要求标签上不出现这两个属性。
+    """
+    form_tag = re.search(r"<form[^>]*>", _read(LOGIN_HTML))
+
+    assert form_tag is not None, "login.html 里没有 <form>"
+    assert "action=" not in form_tag.group(0)
+    assert "method=" not in form_tag.group(0)
+
+
+@pytest.mark.parametrize("path", HTML_ENTRIES, ids=lambda path: path.name)
+def test_each_html_entry_point_registers_its_assets(path: Path) -> None:
+    """每个 HTML 入口引用的绝对路径都必须登记，登录页也不例外。"""
+    referenced = set(_ASSET_REF.findall(_read(path)))
+
+    assert referenced <= set(STATIC_FILES), (
+        f"{path.name} 引用了未登记的静态资源：{sorted(referenced - set(STATIC_FILES))}"
     )

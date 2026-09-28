@@ -5,6 +5,7 @@
 """
 
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -12,19 +13,34 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from domain_update.auth import (
+    COOKIE_NAME,
+    SESSION_TTL_SECONDS,
+    AuthGuard,
+    Credentials,
+)
 from domain_update.config import AppConfig, ConfigStore
 from domain_update.history import DEFAULT_MAX_RECORDS, CheckHistoryStore, CheckRecord
 from domain_update.models import DnsStatus, Result
 from domain_update.scheduler import SchedulerSnapshot
 from domain_update.service import DomainUpdateService
+# _ROUTES 是私有名字，这里刻意引入：下面有一条用例遍历整张路由表来保证
+# 「新增接口忘了加鉴权」一定会被测试发现，这比只测已知路径更有价值。
 from domain_update.web.api import (
     HISTORY_MAX_PAGE_SIZE,
     HISTORY_PAGE_SIZE,
     HISTORY_PREVIEW_LIMIT,
+    _ROUTES,
     WebApi,
 )
 
 JSON_HEADERS = {"content-type": "application/json", "host": "127.0.0.1:8501"}
+
+AUTH_USERNAME = "admin"
+AUTH_PASSWORD = "s3cret-password"
+
+# 无需会话即可访问的接口，必须与 api._PUBLIC_ROUTES 一致。
+PUBLIC_ROUTES = {"/healthz", "/api/login", "/api/logout"}
 
 
 class StubScheduler:
@@ -62,6 +78,7 @@ def make_api(
     tmp_path: Path,
     config: AppConfig | None = None,
     scheduler: StubScheduler | None = None,
+    auth: AuthGuard | None = None,
 ) -> WebApi:
     store = ConfigStore(tmp_path)
     store.save(
@@ -78,7 +95,16 @@ def make_api(
     return WebApi(
         service=DomainUpdateService(store),
         scheduler=scheduler if scheduler is not None else StubScheduler(_snapshot()),
+        auth=auth,
     )
+
+
+def auth_guard() -> AuthGuard:
+    return AuthGuard(Credentials(username=AUTH_USERNAME, password=AUTH_PASSWORD))
+
+
+def session_headers(token: str) -> dict[str, str]:
+    return {**JSON_HEADERS, "cookie": f"{COOKIE_NAME}={token}"}
 
 
 def post(api: WebApi, path: str, payload: dict[str, Any] | None = None) -> Any:
@@ -87,6 +113,21 @@ def post(api: WebApi, path: str, payload: dict[str, Any] | None = None) -> Any:
         path,
         raw_body=json.dumps(payload or {}).encode("utf-8"),
         headers=JSON_HEADERS,
+    )
+
+
+def login(
+    api: WebApi,
+    username: object = AUTH_USERNAME,
+    password: object = AUTH_PASSWORD,
+    client_ip: str | None = None,
+) -> Any:
+    return api.handle(
+        "POST",
+        "/api/login",
+        raw_body=json.dumps({"username": username, "password": password}).encode("utf-8"),
+        headers=JSON_HEADERS,
+        client_ip=client_ip,
     )
 
 
@@ -818,3 +859,272 @@ def test_wrong_method_returns_405(tmp_path: Path) -> None:
 
     assert api.handle("GET", "/api/update").status == 405
     assert post(api, "/api/state").status == 405
+
+
+# ---- 登录鉴权 ---------------------------------------------------------------
+
+
+def test_auth_is_disabled_by_default(tmp_path: Path) -> None:
+    """既有行为锁定：没有显式传入守卫时一律不鉴权。
+
+    默认值不能去读环境变量，否则开发机上恰好导出了 WEB_USERNAME 就会让整套测试变红。
+    """
+    api = make_api(tmp_path)
+
+    assert api.handle("GET", "/api/state", headers=JSON_HEADERS).status == 200
+
+
+def test_state_requires_a_session(tmp_path: Path) -> None:
+    api = make_api(tmp_path, auth=auth_guard())
+
+    response = api.handle("GET", "/api/state", headers=JSON_HEADERS)
+
+    assert response.status == 401
+    assert response.payload["ok"] is False
+    assert response.payload["data"] is None
+    assert "登录" in response.payload["message"]
+
+
+def test_state_accepts_a_valid_session_cookie(tmp_path: Path) -> None:
+    guard = auth_guard()
+    api = make_api(tmp_path, auth=guard)
+
+    response = api.handle("GET", "/api/state", headers=session_headers(guard.issue()))
+
+    assert response.status == 200
+    assert response.payload["ok"] is True
+
+
+def test_state_rejects_an_expired_session_cookie(tmp_path: Path) -> None:
+    guard = auth_guard()
+    api = make_api(tmp_path, auth=guard)
+    expired = guard.issue(now=time.time() - SESSION_TTL_SECONDS - 60)
+
+    assert api.handle("GET", "/api/state", headers=session_headers(expired)).status == 401
+
+
+def test_state_rejects_a_tampered_session_cookie(tmp_path: Path) -> None:
+    guard = auth_guard()
+    api = make_api(tmp_path, auth=guard)
+    token = guard.issue()
+
+    assert (
+        api.handle("GET", "/api/state", headers=session_headers(token + "x")).status == 401
+    )
+
+
+@pytest.mark.parametrize("path", sorted(set(_ROUTES) - PUBLIC_ROUTES))
+def test_every_protected_route_requires_a_session(tmp_path: Path, path: str) -> None:
+    """遍历整张路由表：以后新增接口忘了鉴权，这条用例会直接失败。"""
+    api = make_api(tmp_path, auth=auth_guard())
+    methods, _ = _ROUTES[path]
+    method = sorted(methods)[0]
+
+    response = api.handle(
+        method,
+        path,
+        raw_body=b"{}",
+        headers=JSON_HEADERS,
+        client_ip="10.0.0.1",
+    )
+
+    assert response.status == 401, f"{path} 未受鉴权保护"
+
+
+def test_health_is_public(tmp_path: Path) -> None:
+    """容器健康检查打的就是这个接口，加鉴权会让容器永远 unhealthy。"""
+    api = make_api(tmp_path, auth=auth_guard())
+
+    response = api.handle("GET", "/healthz", headers=JSON_HEADERS)
+
+    assert response.status == 200
+
+
+def test_login_returns_a_session_cookie(tmp_path: Path) -> None:
+    api = make_api(tmp_path, auth=auth_guard())
+
+    response = login(api)
+
+    assert response.status == 200
+    cookie = response.headers["Set-Cookie"]
+    assert cookie.startswith(f"{COOKIE_NAME}=")
+    assert "HttpOnly" in cookie
+    assert "Max-Age=" in cookie
+
+
+def test_login_cookie_grants_access(tmp_path: Path) -> None:
+    api = make_api(tmp_path, auth=auth_guard())
+
+    token = login(api).headers["Set-Cookie"].split(";", 1)[0].split("=", 1)[1]
+
+    assert api.handle("GET", "/api/state", headers=session_headers(token)).status == 200
+
+
+@pytest.mark.parametrize(
+    ("username", "password"),
+    [
+        (AUTH_USERNAME, "wrong"),
+        ("nobody", AUTH_PASSWORD),
+        (AUTH_USERNAME.upper(), AUTH_PASSWORD),
+    ],
+    ids=["密码错", "用户名错", "大小写不符"],
+)
+def test_login_rejects_bad_credentials_with_one_message(
+    tmp_path: Path, username: str, password: str
+) -> None:
+    """两种失败必须给出完全相同的文案，否则等于告诉爆破者用户名对不对。"""
+    api = make_api(tmp_path, auth=auth_guard())
+
+    response = login(api, username, password)
+
+    assert response.status == 401
+    assert response.payload["message"] == "用户名或密码错误"
+    assert "Set-Cookie" not in response.headers
+
+
+@pytest.mark.parametrize(
+    ("username", "password"),
+    [(123, 456), (None, None), ([], {}), (True, False)],
+    ids=["整数", "None", "容器类型", "布尔"],
+)
+def test_login_rejects_non_string_credentials(
+    tmp_path: Path, username: object, password: object
+) -> None:
+    """请求体字段可以是任意 JSON 类型，不能因此抛异常变成 500。"""
+    api = make_api(tmp_path, auth=auth_guard())
+
+    assert login(api, username, password).status == 401
+
+
+def test_login_requires_json_content_type(tmp_path: Path) -> None:
+    api = make_api(tmp_path, auth=auth_guard())
+
+    response = api.handle(
+        "POST",
+        "/api/login",
+        raw_body=b"username=admin&password=x",
+        headers={"content-type": "application/x-www-form-urlencoded", "host": "127.0.0.1:8501"},
+    )
+
+    assert response.status == 415
+
+
+def test_login_rejects_cross_site_origin(tmp_path: Path) -> None:
+    api = make_api(tmp_path, auth=auth_guard())
+
+    response = api.handle(
+        "POST",
+        "/api/login",
+        raw_body=json.dumps({"username": AUTH_USERNAME, "password": AUTH_PASSWORD}).encode(),
+        headers={**JSON_HEADERS, "origin": "http://evil.example.com"},
+    )
+
+    assert response.status == 403
+
+
+def test_login_is_throttled_after_repeated_failures(tmp_path: Path) -> None:
+    api = make_api(tmp_path, auth=auth_guard())
+
+    # 阈值 5：第 5 次失败记录下来之后就已经越线，因此它本身回 429。
+    for _ in range(4):
+        assert login(api, password="wrong", client_ip="10.0.0.1").status == 401
+
+    blocked = login(api, password="wrong", client_ip="10.0.0.1")
+
+    assert blocked.status == 429
+    assert "Retry-After" in blocked.headers
+    assert login(api, password="wrong", client_ip="10.0.0.1").status == 429
+    # 其他来源不受影响。
+    assert login(api, client_ip="10.0.0.2").status == 200
+
+
+def test_throttled_source_with_correct_credentials_still_gets_in(tmp_path: Path) -> None:
+    """限流只挡「口令不对」的尝试，不挡合法用户。
+
+    反代后面所有请求共用代理地址，若限流连口令正确也拦，任意一个人连错 5 次就能把
+    包括管理员在内的所有人锁在门外 15 分钟；攻击者每 15 分钟发几个请求即可长期维持锁死。
+    放行正确口令不削弱抗爆破——攻击者没有正确口令，走不到这条分支。
+    """
+    api = make_api(tmp_path, auth=auth_guard())
+    for _ in range(5):
+        login(api, password="wrong", client_ip="10.0.0.1")
+
+    assert login(api, password="wrong", client_ip="10.0.0.1").status == 429
+    assert login(api, client_ip="10.0.0.1").status == 200
+    # 成功登录顺带清零，之后错误尝试重新从 0 开始计数。
+    assert login(api, password="wrong", client_ip="10.0.0.1").status == 401
+
+
+def test_unknown_path_is_401_when_unauthenticated(tmp_path: Path) -> None:
+    """闸门在路由查找之前：否则未登录方靠 401/404 的差别就能枚举出有效接口。"""
+    api = make_api(tmp_path, auth=auth_guard())
+
+    assert api.handle("GET", "/api/nope", headers=JSON_HEADERS).status == 401
+
+
+def test_login_throttle_ignores_forwarded_for_header(tmp_path: Path) -> None:
+    """X-Forwarded-For 是客户端可伪造的，拿它做计数等于把限流关掉。"""
+    api = make_api(tmp_path, auth=auth_guard())
+    for _ in range(4):
+        login(api, password="wrong", client_ip="10.0.0.1")
+
+    response = api.handle(
+        "POST",
+        "/api/login",
+        raw_body=json.dumps({"username": AUTH_USERNAME, "password": "wrong"}).encode(),
+        headers={**JSON_HEADERS, "x-forwarded-for": "203.0.113.7"},
+        client_ip="10.0.0.1",
+    )
+
+    assert response.status == 429
+
+
+def test_successful_login_resets_the_throttle(tmp_path: Path) -> None:
+    api = make_api(tmp_path, auth=auth_guard())
+    for _ in range(4):
+        login(api, password="wrong", client_ip="10.0.0.1")
+
+    assert login(api, client_ip="10.0.0.1").status == 200
+
+    # 计数已清零，再来四次输错仍不该被限流（第五次才会触发 429）。
+    for _ in range(4):
+        assert login(api, password="wrong", client_ip="10.0.0.1").status == 401
+
+
+def test_logout_clears_the_cookie_without_a_session(tmp_path: Path) -> None:
+    """清 Cookie 不需要权限：会话正好过期时反而最需要能退出。"""
+    api = make_api(tmp_path, auth=auth_guard())
+
+    response = post(api, "/api/logout")
+
+    assert response.status == 200
+    assert "Max-Age=0" in response.headers["Set-Cookie"]
+
+
+def test_login_is_a_no_op_when_auth_is_disabled(tmp_path: Path) -> None:
+    """未启用登录时接口仍然可用，但不能装成「已登录」下发一个不会被校验的 Cookie。"""
+    api = make_api(tmp_path)
+
+    response = login(api)
+
+    assert response.status == 200
+    assert "Set-Cookie" not in response.headers
+    assert "未启用登录" in response.payload["message"]
+
+
+def test_logout_still_clears_a_leftover_cookie_when_auth_is_disabled(tmp_path: Path) -> None:
+    """没开鉴权时登出也照常清 Cookie：它顺便清掉「之前开过鉴权」留下的死 Cookie。"""
+    api = make_api(tmp_path)
+
+    response = post(api, "/api/logout")
+
+    assert response.status == 200
+    assert "Max-Age=0" in response.headers["Set-Cookie"]
+
+
+def test_session_cookie_is_only_set_by_login(tmp_path: Path) -> None:
+    api = make_api(tmp_path, auth=auth_guard())
+
+    response = api.handle("GET", "/api/state", headers=JSON_HEADERS)
+
+    assert "Set-Cookie" not in response.headers

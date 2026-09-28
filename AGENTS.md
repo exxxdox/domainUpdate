@@ -17,7 +17,7 @@ REST 就是这个取舍的结果）。
 ```bash
 sh script.sh init          # uv sync --frozen，按锁文件安装
 sh script.sh run           # uv run python launcher.py，等价于生产启动
-uv run pytest              # 全部测试（118 个，约 5 秒）
+uv run pytest              # 全部测试（234 个，约 19 秒）
 uv run pytest tests/test_web_api.py -k history   # 按文件 + 关键字过滤
 uv run python main.py      # 命令行单次检查+更新入口（等价 /api/update，来源记为 cli）
 docker compose up -d --build && docker compose logs -f domain-update
@@ -40,7 +40,8 @@ notifier.py    Gotify 推送（Token 走 X-Gotify-Key 请求头，日志脱敏�
 providers.py   DnsProvider 协议 + CloudflareProvider / AlibabaProvider
 service.py     DomainUpdateService：编排「校验 → 探测 → 查记录 → 写记录 → 通知 → 记历史」
 scheduler.py   UpdateScheduler：进程内 APScheduler 单例，定时调用 service
-web/api.py     WebApi：路由表 + 跨站防护 + 请求校验 + 状态组装
+auth.py        登录鉴权：env 读凭据 + 无状态签名 Cookie + 登录失败节流，纯逻辑无 I/O
+web/api.py     WebApi：路由表 + 鉴权闸门 + 跨站防护 + 请求校验 + 状态组装
 web/server.py  ConsoleServer：把 http.server 请求翻译成 WebApi.handle()，托管静态资源
 launcher.py    生产入口：配日志 → 配线程栈 → 恢复调度 → 启动 HTTP 服务
 main.py        命令行入口，复用 DomainUpdateService
@@ -55,7 +56,9 @@ main.py        命令行入口，复用 DomainUpdateService
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET` | `/healthz` | 健康检查，返回 `{"status": "ok"}`；不读配置、不发网络请求（容器探活用） |
+| `GET` | `/healthz` | 健康检查，返回 `{"status": "ok"}`；不读配置、不发网络请求（容器探活用）。不需要登录（另两个公开接口是登录与登出），加鉴权会让容器永远 unhealthy |
+| `POST` | `/api/login` | 校验 `username`/`password`，成功回 `Set-Cookie`；失败 401，同一来源累计 5 次失败后 429（带 `Retry-After`）。**口令正确即使该来源已被限流也放行**。未配置凭据时回 200 且不下发 Cookie |
+| `POST` | `/api/logout` | 下发立即过期的同名 Cookie。**公开接口**：清 Cookie 不需要权限，会话刚好过期时反而最需要能退出 |
 | `GET` | `/api/state` | 脱敏配置、公网地址、DNS 状态、调度器状态、检查记录报告（最近 5 条预览，汇总基于全部） |
 | `GET` | `/api/history` | 检查记录分页，供首页浮层浏览全部。`page` 缺省 1，`page_size` 缺省 50、上限 200；非法或越界一律夹取回落，不报错。响应含 `page`、`page_size`、`total`、`total_pages` |
 | `POST` | `/api/config` | 保存配置，成功后同步定时检查 |
@@ -72,12 +75,19 @@ main.py        命令行入口，复用 DomainUpdateService
 | 环境变量 | 默认值 | 用途 |
 |---|---|---|
 | `WEB_PORT` | `8501` | Web 监听端口，须为 1-65535 整数；非法值记 WARNING 并退回默认 |
+| `WEB_USERNAME` | 空 | 控制台登录用户名 |
+| `WEB_PASSWORD` | 空 | 控制台登录密码。**只配一项 = 配置错误，拒绝启动**（退出码 2）；两个都空才是「明确不启用登录」 |
 | `DOMAIN_UPDATE_DATA_DIR` | `.data` | 数据目录，存放 `config.json` 与 `check_history.jsonl` |
 | `DOMAIN_UPDATE_LOG_LEVEL` | `INFO` | 日志级别，非法值退回 `INFO` |
 
-应用配置（服务商、凭据、定时检查、Gotify）**只**来自页面写入的 `config.json`，程序不读任何
-覆盖这些字段的环境变量——同一个字段不允许有两个来源。`compose.yaml` 用 `${WEB_PORT:-8501}`
-传入端口，也可直接改该文件。
+应用配置（服务商、定时检查、Gotify、页面里填的服务商密钥）**只**来自页面写入的
+`config.json`，程序不读任何覆盖这些字段的环境变量——同一个字段不允许有两个来源。
+`WEB_USERNAME`/`WEB_PASSWORD` 不违反这条：它们是**部署参数**，与 `WEB_PORT` 同类，
+只用于能否访问控制台，从不进入 `config.json`。
+
+`compose.yaml` 用 `${WEB_PORT:-8501}`、`${WEB_USERNAME:-}`、`${WEB_PASSWORD:-}` 从项目目录的
+`.env` 取值；`.env` 已被 `.gitignore` 与 `.dockerignore` 排除。本地开发由 `sh script.sh run`
+读取同一个文件，两边行为一致。模板见 `.env.example`。
 
 ## DNS 写入语义
 
@@ -117,17 +127,42 @@ main.py        命令行入口，复用 DomainUpdateService
 - 调度器必须是进程内单例（`get_scheduler()`），`configure()` 按 (`enabled`, `interval`) 签名
   幂等，否则页面每次刷新都会重置下次执行时间。
 
-**HTTP 安全边界**（`web/server.py` + `web/api.py`）
-- 服务**没有内建登录**，安全性完全依赖部署位置（防火墙或前置带认证的反向代理）。
+**HTTP 安全边界**（`web/server.py` + `web/api.py` + `auth.py`）
+- 登录凭据只来自 `WEB_USERNAME`/`WEB_PASSWORD`，无注册、无找回。会话是**无状态签名 Cookie**
+  （`auth.AuthGuard`）：密钥由凭据派生，改口令即让所有已发 Cookie 失效，没有服务端会话表。
+  Cookie 为 `HttpOnly; SameSite=Lax; Path=/`，**没有 `Secure`**——部署是明文 HTTP，
+  加上它直连场景根本登不进去，公网必须套 HTTPS 反代。
+- **两个凭据变量都缺**时服务照常启动但不鉴权（只在日志里记一条 WARNING）。这是刻意的取舍：
+  升级既有部署不该因为少两个环境变量就起不来。**恰好只缺一个**是另一回事——那几乎一定是
+  变量名写错，`launcher.py` 会记 ERROR 并以退出码 2 拒绝启动，绝不按「未配置」放行：
+  否则用户以为开了登录，实际控制台完全裸奔，而全库只有一行 WARNING。
+- 接口闸门在 `WebApi.handle()` 内、读完请求体之后。**不要挪到 `server._handle_api` 里
+  `_read_body()` 之前**：那样未登录的大请求体会留在套接字里，keep-alive 下被当成下一个
+  请求的请求行解析（同 413 那条注释描述的现象）。静态资源的闸门在 `server._handle`。
+- 公开集合固定在 `api._PUBLIC_ROUTES` 与 `server._PUBLIC_STATIC`。`/healthz` 必须公开：
+  Dockerfile 的 HEALTHCHECK 用 `urllib.request`，它跟随重定向，挡住会让容器永远 unhealthy，
+  而 Docker 不会因 unhealthy 重启容器，故障是静默的。`/api/logout` 公开是因为清 Cookie
+  不需要权限。登录页自己的 `login.html`/`login.js`/`app.css` 也必须公开，否则无限重定向。
+- 登录失败按来源地址限流（`auth.LoginThrottle`，5 次 / 15 分钟，429 带 `Retry-After`）。
+  来源地址只取 `client_address[0]`，**绝不读 `X-Forwarded-For`**（客户端可伪造，等于关掉限流）。
+  **凭据校验必须在限流判定之前**：反代后面所有请求共用一个来源地址，先判限流的话，
+  任意一个人连错 5 次就能把所有人（含管理员）锁在门外 15 分钟，攻击者每 15 分钟几个请求
+  即可长期维持；而「口令正确就放行」不削弱抗爆破——攻击者没有正确口令，走不到这条分支。
+  计数表有硬上限 `MAX_TRACKED_CLIENTS`，防止大量不同来源把它撑大、拖慢每次写入。
 - CSP 为 `default-src 'none'`：静态页面**不能**出现内联 `style` 属性、内联事件属性、
   内联 `<style>` 块、无 `src` 的 `<script>`，浏览器会静默丢弃。页面也不加载任何外部资源。
+  另注意 `form-action 'none'`：登录表单不写 `action`/`method`，提交由 `login.js` 走 fetch。
 - 新增静态文件必须同时登记进 `STATIC_FILES` 与 `CONTENT_TYPES`（不用 mimetypes 猜类型，
   Alpine 基础镜像没有 `/etc/mime.types`）。不做首页回落，映射不到即 404。
 - `POST` 必须 `Content-Type: application/json`（浏览器表单发不出这个类型，以此挡住跨站表单
   提交），且 `Origin` 与 `Host` 不同源即 403，不返回任何 CORS 头。
 - 请求体上限 `MAX_BODY_BYTES`（64KB），超限回 413 并关闭连接（不能只回 413 而不处置
   套接字里的残留字节，keep-alive 下会串帧）。
-- 新增路由只需往 `api._ROUTES` 加一行，并在 `WebApi` 上加同名处理函数。
+- 需要额外响应头（`Set-Cookie`、`Retry-After`）时把 `ApiResponse.headers` 填上，
+  `server._send_json` 会在安全头之后发出，并挡掉 `Content-Type`/`Content-Length`/`Connection`
+  等本层已决定的名字。
+- 新增路由只需往 `api._ROUTES` 加一行，并在 `WebApi` 上加同名处理函数；**同时确认它不在
+  `_PUBLIC_ROUTES` 里**——`tests/test_web_api.py` 有一条遍历整张路由表的用例专门盯这件事。
 
 **容器特有**
 - `launcher.py` 里顺序不可调换：先 `configure_logging()`（否则启动期故障看不到），再
@@ -143,9 +178,10 @@ main.py        命令行入口，复用 DomainUpdateService
 ## 测试约定
 
 - 测试与模块一一对应（`tests/test_<module>.py`），pytest 配置里 `pythonpath = ["."]`。
-- 没有前端测试框架。前端的静态契约由 `tests/test_static_contract.py` 兜住三类静默故障：
-  `app.js` 里 `el()` 用到的 id 在 `index.html` 中不存在（表现为整页白屏）、会被 CSP 丢弃的
-  内联写法、`index.html` 引用但 `STATIC_FILES` 未登记的静态资源。改前端 HTML/JS/CSS 后必须跑它。
+- 没有前端测试框架。前端的静态契约由 `tests/test_static_contract.py` 兜住几类静默故障：
+  `el()` 用到的 id 在对应 HTML 中不存在（表现为整页白屏或登录页完全不响应）、会被 CSP 丢弃的
+  内联写法、HTML 引用但 `STATIC_FILES` 未登记的静态资源、登录表单写了 `action`/`method`。
+  新增页面时必须把文件加进 `SCANNED_FILES` 与 `HTML_ENTRIES`，否则契约对它静默失效。
 - `tests/test_web_server.py` 起真实套接字：请求体超限时如何处置连接里的字节，只能在连接层
   观测，`WebApi.handle()` 那层看不到。涉及 HTTP 连接行为的改动要在这里加测。
 - 网络相关测试用 monkeypatch 替换 `requests`，不打真实外部接口。

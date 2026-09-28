@@ -13,6 +13,14 @@ case "$1" in
     ;;
   run)
     echo "正在运行..."
+    # 本地开发也读 .env：容器里的凭据来自那里，两边行为不一致最容易踩坑。
+    # set -a 让 source 进来的变量自动导出；文件不存在时跳过（凭据本身是可选项）。
+    if [ -f .env ]; then
+      set -a
+      # shellcheck disable=SC1091
+      . ./.env
+      set +a
+    fi
     # 统一启动器确保无人打开页面时定时任务也会在进程启动后恢复。
     uv run python launcher.py
     ;;

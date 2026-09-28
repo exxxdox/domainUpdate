@@ -10,11 +10,12 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from dataclasses import asdict, dataclass, fields, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import datetime
 from typing import Any, Mapping, Protocol
 from urllib.parse import parse_qs, urlsplit
 
+from domain_update.auth import AuthGuard, LoginThrottle
 from domain_update.config import AppConfig
 from domain_update.history import DEFAULT_MAX_RECORDS, CheckRecord, summarize
 from domain_update.models import DnsStatus
@@ -95,6 +96,9 @@ class SchedulerLike(Protocol):
 class ApiResponse:
     status: int
     payload: dict[str, Any]
+    # 少数接口需要额外的响应头：登录下发 Set-Cookie、限流回 Retry-After。
+    # 默认空字典，既有构造方式（位置参数两个）与调用点完全不受影响。
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -108,12 +112,20 @@ class ConsoleState:
     update: dict[str, Any] | None = None
 
 
-def _success(data: Any, message: str = "") -> ApiResponse:
-    return ApiResponse(200, {"ok": True, "message": message, "data": data})
+def _success(
+    data: Any, message: str = "", headers: dict[str, str] | None = None
+) -> ApiResponse:
+    return ApiResponse(
+        200, {"ok": True, "message": message, "data": data}, headers or {}
+    )
 
 
-def _failure(status: int, message: str) -> ApiResponse:
-    return ApiResponse(status, {"ok": False, "message": message, "data": None})
+def _failure(
+    status: int, message: str, headers: dict[str, str] | None = None
+) -> ApiResponse:
+    return ApiResponse(
+        status, {"ok": False, "message": message, "data": None}, headers or {}
+    )
 
 
 def _parse_query(path: str) -> dict[str, str]:
@@ -235,6 +247,7 @@ class WebApi:
         service: DomainUpdateService | None = None,
         scheduler: SchedulerLike | None = None,
         state: ConsoleState | None = None,
+        auth: AuthGuard | None = None,
     ) -> None:
         self._service = service if service is not None else DomainUpdateService()
         if scheduler is None:
@@ -246,6 +259,12 @@ class WebApi:
         # 属性名不能叫 _state：会与 /api/state 的处理函数同名并被覆盖成不可调用对象。
         self._console = state if state is not None else ConsoleState()
         self._lock = threading.Lock()
+        # 默认不鉴权，且默认值绝不读环境变量：否则开发机上恰好导出了 WEB_USERNAME
+        # 就会让整套测试变红。真正从环境变量造守卫的是 launcher 与 serve()。
+        self._auth = auth if auth is not None else AuthGuard.disabled()
+        # 失败计数用自己的锁：WebApi._lock 会跨越读历史的磁盘 IO 长时间持有，
+        # 借它会把一次登录卡在一次历史读取后面。
+        self._throttle = LoginThrottle()
 
     # ---- 路由 ----------------------------------------------------------------
 
@@ -255,6 +274,7 @@ class WebApi:
         path: str,
         raw_body: bytes = b"",
         headers: Mapping[str, str] | None = None,
+        client_ip: str | None = None,
     ) -> ApiResponse:
         method = method.upper()
         normalized = {
@@ -265,9 +285,19 @@ class WebApi:
         if cross_site is not None:
             return cross_site
 
-        route = _ROUTES.get(path.split("?", 1)[0].rstrip("/") or "/")
+        target = path.split("?", 1)[0].rstrip("/") or "/"
+
+        # 鉴权闸门放在这一层，而不是 server 层调用 handle() 之前：server 会先读完整
+        # 请求体，在这里拒绝时套接字里不会残留未读字节。放在前面拒绝会让 keep-alive
+        # 连接上剩下的请求体被当成下一个请求的请求行解析（详见 server._handle_api 注释）。
+        # 闸门又在路由查找之前：否则未登录方靠 401 与 404 的差别就能枚举出有效接口。
+        if target not in _PUBLIC_ROUTES and not self._auth.is_authorized(normalized):
+            return self.unauthorized()
+
+        route = _ROUTES.get(target)
         if route is None:
             return _failure(404, "未知接口")
+
         allowed_methods, handler_name = route
         if method not in allowed_methods:
             return _failure(405, "请求方法不被允许")
@@ -294,11 +324,64 @@ class WebApi:
 
         handler = getattr(self, handler_name)
         try:
+            if target == "/api/login":
+                # 登录是唯一需要来源地址的接口，而来源地址来自连接、不是请求体，
+                # 塞进 params 会和表单字段争用同一个命名空间，所以单独走一条分支。
+                return self._handle_login(params, client_ip)
             return handler(params)
         except Exception:
             # 未预期异常既不能让连接直接断掉，也不能把堆栈回给浏览器。
             logger.exception("处理请求失败：%s %s", method, path)
             return _failure(500, "服务内部错误，请查看容器日志")
+
+    def is_authorized(self, headers: Mapping[str, str]) -> bool:
+        """静态资源的闸门由 server 层调用；接口层的闸门在 handle() 内部。"""
+        return self._auth.is_authorized(headers)
+
+    def unauthorized(self) -> ApiResponse:
+        return _failure(401, "请先登录")
+
+    def _handle_login(self, params: dict[str, Any], client_ip: str | None) -> ApiResponse:
+        """登录入口：**先校验凭据，再按结果决定是否计数与限流**。
+
+        顺序不能反过来。先判限流的话，反向代理后面所有人共用代理地址，任意一个人连错
+        5 次就会把包括管理员在内的所有人锁在门外 15 分钟，攻击者靠每 15 分钟几个请求
+        就能让登录一直不可用。而「口令正确就放行」不削弱抗爆破：攻击者手里没有正确口令，
+        这条分支对他没有收益；合法用户则永远进得来。
+        """
+        client = client_ip or ""
+        response = self._login(params)
+        if response.status == 200:
+            self._throttle.reset(client)
+            # 成功与失败都要留痕：安全事件需要能归因。只记来源，绝不记提交的凭据。
+            logger.info("登录成功：来源=%s", client)
+            return response
+
+        self._throttle.record_failure(client)
+        logger.warning("登录失败：来源=%s", client)
+        retry_after = self._throttle.retry_after_seconds(client)
+        if not retry_after:
+            return response
+        return _failure(
+            429,
+            f"登录失败次数过多，请 {retry_after} 秒后再试",
+            {"Retry-After": str(retry_after)},
+        )
+
+    def _login(self, params: dict[str, Any]) -> ApiResponse:
+        if not self._auth.enabled:
+            # 没配凭据时不存在「登录」这回事，回成功让页面直接进控制台更贴合实际状态，
+            # 也避免走 issue() 那条「未配置凭据不该签发会话」的断言路径。
+            return _success(None, "当前未启用登录，无需登录")
+        if not self._auth.authenticate(params.get("username"), params.get("password")):
+            return _failure(401, "用户名或密码错误")
+        return _success(
+            None, "登录成功", {"Set-Cookie": self._auth.login_cookie(self._auth.issue())}
+        )
+
+    def _logout(self, params: dict[str, Any]) -> ApiResponse:
+        """清 Cookie 不需要任何权限，会话刚好过期时反而最需要能退出，所以它是公开接口。"""
+        return _success(None, "已退出登录", {"Set-Cookie": self._auth.logout_cookie()})
 
     def _reject_cross_site(self, headers: Mapping[str, str]) -> ApiResponse | None:
         """浏览器允许跨站发起简单请求，必须显式拒绝非同源调用。
@@ -557,8 +640,15 @@ class WebApi:
         )
 
 
+# 无需会话即可访问的接口。三个都有明确理由：
+# healthz 供容器探活，加了鉴权容器会永远 unhealthy；login 是拿到会话的入口；
+# logout 只是让浏览器丢掉 Cookie，不需要任何权限，否则会话过期后就退不出去了。
+_PUBLIC_ROUTES = frozenset({"/healthz", "/api/login", "/api/logout"})
+
 _ROUTES: dict[str, tuple[frozenset[str], str]] = {
     "/healthz": (frozenset({"GET"}), "_health"),
+    "/api/login": (frozenset({"POST"}), "_login"),
+    "/api/logout": (frozenset({"POST"}), "_logout"),
     "/api/state": (frozenset({"GET"}), "_state"),
     "/api/history": (frozenset({"GET"}), "_history_page"),
     "/api/config": (frozenset({"POST"}), "_save_config"),
