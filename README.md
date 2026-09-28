@@ -66,15 +66,18 @@ docker compose logs -f domain-update
 
 ## 环境变量
 
-下面五项是部署参数，通过环境变量传入（放进项目目录的 `.env` 即可，参考 `.env.example`）：
+下面四项是部署参数，通过环境变量传入（放进项目目录的 `.env` 即可，参考 `.env.example`）：
 
 | 环境变量 | 默认值 | 用途 |
 |---|---|---|
 | `WEB_PORT` | `8501` | Web 页面监听端口，必须是 1-65535 的整数；非法值会记一条 WARNING 并退回默认端口 |
 | `WEB_USERNAME` | 空 | 登录用户名 |
 | `WEB_PASSWORD` | 空 | 登录密码。只填一项会被当成配置错误，服务拒绝启动（多半是变量名写错了） |
-| `DOMAIN_UPDATE_DATA_DIR` | `.data` | 数据目录，存放 `config.json` 与 `check_history.jsonl` |
-| `DOMAIN_UPDATE_LOG_LEVEL` | `INFO` | 日志级别，非法值退回 `INFO` |
+| `DOMAIN_UPDATE_LOG_LEVEL` | `INFO` | 日志级别（`DEBUG`/`INFO`/`WARNING`/`ERROR`），非法值退回 `INFO` |
+
+在容器里运行时不通过环境变量调整数据目录：镜像已把它固定为 `/app/data`，并由命名卷
+`domain-update-data` 持久化。只有直接跑 `python launcher.py`（不经 Docker）时，
+`DOMAIN_UPDATE_DATA_DIR` 才有意义，默认 `.data`。
 
 服务商、凭据、定时检查与 Gotify 等应用配置只在页面里设置，并保存到数据目录，不通过环境变量传入。
 

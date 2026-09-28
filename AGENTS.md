@@ -77,17 +77,25 @@ main.py        命令行入口，复用 DomainUpdateService
 | `WEB_PORT` | `8501` | Web 监听端口，须为 1-65535 整数；非法值记 WARNING 并退回默认 |
 | `WEB_USERNAME` | 空 | 控制台登录用户名 |
 | `WEB_PASSWORD` | 空 | 控制台登录密码。**只配一项 = 配置错误，拒绝启动**（退出码 2）；两个都空才是「明确不启用登录」 |
-| `DOMAIN_UPDATE_DATA_DIR` | `.data` | 数据目录，存放 `config.json` 与 `check_history.jsonl` |
 | `DOMAIN_UPDATE_LOG_LEVEL` | `INFO` | 日志级别，非法值退回 `INFO` |
+
+`DOMAIN_UPDATE_DATA_DIR`（代码默认 `.data`）**不在 compose 里设置**：镜像的 `ENV` 已把它固定为
+`/app/data`，再写一遍就是同一个值有两个来源。只有不经 Docker 直接跑 `python launcher.py` 时
+它才有意义。要改容器内的数据目录，改 `Dockerfile` 的 `ENV` 并同步 compose 的挂载点。
 
 应用配置（服务商、定时检查、Gotify、页面里填的服务商密钥）**只**来自页面写入的
 `config.json`，程序不读任何覆盖这些字段的环境变量——同一个字段不允许有两个来源。
 `WEB_USERNAME`/`WEB_PASSWORD` 不违反这条：它们是**部署参数**，与 `WEB_PORT` 同类，
 只用于能否访问控制台，从不进入 `config.json`。
 
-`compose.yaml` 用 `${WEB_PORT:-8501}`、`${WEB_USERNAME:-}`、`${WEB_PASSWORD:-}` 从项目目录的
-`.env` 取值；`.env` 已被 `.gitignore` 与 `.dockerignore` 排除。本地开发由 `sh script.sh run`
-读取同一个文件，两边行为一致。模板见 `.env.example`。
+`compose.yaml` 用 `${WEB_PORT:-8501}`、`${WEB_USERNAME:-}`、`${WEB_PASSWORD:-}`、
+`${DOMAIN_UPDATE_LOG_LEVEL:-INFO}` 从项目目录的 `.env` 取值；`.env` 已被 `.gitignore` 与
+`.dockerignore` 排除。本地开发由 `sh script.sh run` 读取同一个文件，两边行为一致。
+模板见 `.env.example`。
+
+**新增任何需要从 `.env` 传入的变量，必须同时在 `compose.yaml` 的 `environment:` 里列出来**：
+宿主环境变量不列进去就进不了容器，`.env` 里写得再对也没用（`DOMAIN_UPDATE_LOG_LEVEL`
+就曾因此长期失效）。
 
 ## DNS 写入语义
 
