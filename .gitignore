@@ -4,5 +4,7 @@ __pycache__
 /.pytest_cache
 /.data
 /data
+# e2e 跑测用的独立数据目录（DOMAIN_UPDATE_DATA_DIR 指到这里），本地产物不入库。
+/.data-e2e
 /.uv-cache
 /.claude/plans
