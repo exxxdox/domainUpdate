@@ -24,8 +24,21 @@ case "$1" in
     # 统一启动器确保无人打开页面时定时任务也会在进程启动后恢复。
     uv run python launcher.py
     ;;
+  build)
+    # 镜像名必须显式传入：默认名会和同名旧镜像混在一起，推错仓库的代价高于多打几个字。
+    if [ -z "$2" ]; then
+      echo "用法: $0 build <镜像名:标签>"
+      exit 1
+    fi
+    echo "正在构建镜像 $2..."
+    docker build \
+      --build-arg "http_proxy=${http_proxy:-}" \
+      --build-arg "https_proxy=${https_proxy:-}" \
+      --build-arg "no_proxy=${no_proxy:-}" \
+      -t "$2" .
+    ;;
   *)
-    echo "用法: $0 {init | update | run}"
+    echo "用法: $0 {init | update | run | build}"
     exit 1
     ;;
 esac

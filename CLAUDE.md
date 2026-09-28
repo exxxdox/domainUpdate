@@ -17,6 +17,7 @@ REST 就是这个取舍的结果）。
 ```bash
 sh script.sh init          # uv sync --frozen，按锁文件安装
 sh script.sh run           # uv run python launcher.py，等价于生产启动
+sh script.sh build <name>  # docker build -t <name> .，本地构建镜像
 uv run pytest              # 全部测试（234 个，约 19 秒）
 uv run pytest tests/test_web_api.py -k history   # 按文件 + 关键字过滤
 uv run python main.py      # 命令行单次检查+更新入口（等价 /api/update，来源记为 cli）
