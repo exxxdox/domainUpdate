@@ -16,6 +16,9 @@
 docker compose up -d --build
 ```
 
+`compose.yaml` 是入库的基座编排，所有人的起点一致。只属于本机的差异写进同目录的
+`compose.override.yaml`：Docker Compose 会自动加载它并覆盖同名键，该文件不入库。
+
 启动后访问 `http://127.0.0.1:8501`。
 
 查看状态和日志：
@@ -29,8 +32,23 @@ docker compose logs -f domain-update
 
 默认监听 `8501`。Compose 使用 host 网络，服务监听 `0.0.0.0`，即宿主机**全部网卡**都能访问该端口。
 
-改端口有两种方式：编辑 `compose.yaml` 里的 `WEB_PORT`，或在项目目录放一个 `.env` 写入
-`WEB_PORT=自定义端口`。改完重新执行 `docker compose up -d` 生效。
+改端口有两种方式：在 `compose.override.yaml` 里覆盖 `WEB_PORT`，或在项目目录放一个 `.env`
+写入 `WEB_PORT=自定义端口`。改完重新执行 `docker compose up -d` 生效。
+
+### 个人覆盖
+
+`compose.override.yaml` 只放本机专属的改动，Docker Compose 会自动加载它，并按同名键覆盖
+`compose.yaml`。该文件已被 `.gitignore` 忽略，不会进版本库。
+
+```yaml
+services:
+  domain-update:
+    environment:
+      WEB_PORT: "9000"
+      DOMAIN_UPDATE_LOG_LEVEL: DEBUG
+```
+
+未列出的键保持基座的值；映射类字段（如 `environment`）按键合并，不必重复整段配置。
 
 ### 数据持久化
 

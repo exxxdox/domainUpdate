@@ -8,3 +8,5 @@ __pycache__
 /.data-e2e
 /.uv-cache
 /.claude/plans
+# 本机专属的 compose 覆盖：基座 compose.yaml 入库，覆盖文件只服务本机。
+/compose.override.yaml

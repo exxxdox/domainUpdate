@@ -22,5 +22,6 @@ data/
 # 只服务于开发与部署编排的文件。运行阶段已改为显式 COPY 源码目录，
 # 这里再挡一次是为了防止以后有人改回 COPY . . 时把它们带进镜像。
 compose.yaml
+compose.override.yaml
 README.md
 script.sh

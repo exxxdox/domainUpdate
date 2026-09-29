@@ -1,0 +1,51 @@
+# 基座编排：入库，所有部署共用，改动即对所有人生效。
+# 只属于本机的差异（端口、凭据、镜像标签等）写到 compose.override.yaml：
+# docker compose 会自动加载它并按键覆盖本文件，那个文件已在 .gitignore 里，不入库。
+services:
+  domain-update:
+    image: domain-update:local
+    # 本地构建：有了 build 段，`docker compose up -d --build` 才会真正构建本目录的
+    # Dockerfile；没有它时 compose 只认 image，--build 只打印一条警告就被忽略，
+    # 实际跑的是本地已有镜像，改了代码也看不出变化。
+    # 不传 http_proxy 等构建参数：代理由 CLI 侧 ~/.docker/config.json 提供，
+    # compose 与 docker build 读同一份配置，写进 args 只是多一处来源。
+    build:
+      context: .
+    # 使用宿主网络栈：容器直接用宿主的 IPv6 出口，api6.ipify.org 探测不再依赖
+    # Docker 网络自身的 IPv6 配置，因此下面的 networks 段一并删除。
+    # 注意：network_mode 与 ports 互斥，端口映射必须去掉。Windows 上的 Docker Desktop
+    # 长期不支持 host 网络，本配置面向 Linux 宿主。
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      # 这里不设 DOMAIN_UPDATE_DATA_DIR：镜像的 ENV 已经把它固定成 /app/data，
+      # 再写一遍只是同一个值有两个来源。要改数据目录请改 Dockerfile 的 ENV
+      # （并同步下面的 volume 挂载点），不要在这里加回来。
+      #
+      # Web 监听端口。host 网络下这就是宿主端口；compose 会用同名宿主环境变量
+      # 或项目目录下的 .env 做 ${...} 插值，缺省 8501。
+      WEB_PORT: ${WEB_PORT:-8501}
+      # 日志级别（DEBUG/INFO/WARNING/ERROR）。列出来才会把 .env 里的值传进容器：
+      # 宿主环境变量不写在这里是进不去的。非法值由 logging_setup 退回 INFO。
+      DOMAIN_UPDATE_LOG_LEVEL: ${DOMAIN_UPDATE_LOG_LEVEL:-INFO}
+      # 登录凭据。compose 的 ${...} 插值会读项目目录下的 .env，因此这两个值写进
+      # .env 即可；但必须显式列在这里——不列的话 .env 里的同名变量根本进不了容器。
+      # 两个都为空等于不启用登录（启动日志里会有一条 WARNING）；只填一个会被当成
+      # 配置错误，容器日志里出现 ERROR 并以退出码 2 退出。
+      WEB_USERNAME: ${WEB_USERNAME:-}
+      WEB_PASSWORD: ${WEB_PASSWORD:-}
+    volumes:
+      # 必须用命名卷而不是 bind mount：Docker 首次创建卷时会连镜像里 /app/data 的
+      # appuser 属主一起继承，容器内的非 root 用户才写得进去。bind mount 改用宿主目录
+      # 的属主，而容器内 appuser(uid 10001) 无权改属主，保存配置就会报 PermissionError。
+      - domain-update-data:/app/data
+    logging:
+      driver: json-file
+      options:
+        # 健康检查每 30 秒打一次 /healthz，访问日志会持续增长；json-file 驱动默认没有
+        # 上限，不限制会慢慢吃满磁盘。总量上限约 30MB。
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  domain-update-data:

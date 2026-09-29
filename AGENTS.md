@@ -89,14 +89,17 @@ main.py        命令行入口，复用 DomainUpdateService
 `WEB_USERNAME`/`WEB_PASSWORD` 不违反这条：它们是**部署参数**，与 `WEB_PORT` 同类，
 只用于能否访问控制台，从不进入 `config.json`。
 
-`compose.yaml` 用 `${WEB_PORT:-8501}`、`${WEB_USERNAME:-}`、`${WEB_PASSWORD:-}`、
+`compose.yaml` 是入库的基座编排，用 `${WEB_PORT:-8501}`、`${WEB_USERNAME:-}`、`${WEB_PASSWORD:-}`、
 `${DOMAIN_UPDATE_LOG_LEVEL:-INFO}` 从项目目录的 `.env` 取值；`.env` 已被 `.gitignore` 与
 `.dockerignore` 排除。本地开发由 `sh script.sh run` 读取同一个文件，两边行为一致。
 模板见 `.env.example`。
 
+本机专属的编排差异写在 `compose.override.yaml`：Docker Compose 自动加载它，并按同名键覆盖基座，
+该文件已被 `.gitignore` 忽略。基座入库、覆盖不入库，避免同一份编排维护两个副本。
+
 **新增任何需要从 `.env` 传入的变量，必须同时在 `compose.yaml` 的 `environment:` 里列出来**：
 宿主环境变量不列进去就进不了容器，`.env` 里写得再对也没用（`DOMAIN_UPDATE_LOG_LEVEL`
-就曾因此长期失效）。
+就曾因此长期失效）。只在本机生效的改动才写进 `compose.override.yaml`。
 
 ## DNS 写入语义
 
@@ -183,6 +186,8 @@ main.py        命令行入口，复用 DomainUpdateService
   去掉它 `docker stop` 会等满宽限期再被 SIGKILL（退出码 137）。
 - compose 用 host 网络（容器直接用宿主 IPv6 出口），因此 `network_mode` 与 `ports` 互斥；
   数据目录必须是命名卷而不是 bind mount（否则 uid 10001 的 appuser 写不进去）。
+- `compose.override.yaml` 刻意不入库（`.gitignore` 忽略）：它只服务本机，入库的基座是
+  `compose.yaml`。不要用 `git add -f` 把它塞回版本库，否则本机设置会污染所有人的部署。
 
 ## 测试约定
 
