@@ -63,7 +63,6 @@ COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 # 显式列出运行期文件，不用 COPY . .：后者会把 uv.lock(352KB)、pyproject.toml、
 # compose.yaml、README 等只服务于开发与部署的文件一并带进镜像。
 COPY --chown=appuser:appuser domain_update ./domain_update
-COPY --chown=appuser:appuser utils ./utils
 COPY --chown=appuser:appuser launcher.py main.py ./
 
 USER appuser

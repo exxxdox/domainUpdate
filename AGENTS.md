@@ -202,7 +202,8 @@ main.py        命令行入口，复用 DomainUpdateService
 
 ## 其他
 
-- `utils/` 目录只剩历史 `__pycache__`，没有源码；`Dockerfile` 仍 `COPY utils`。清理时需同时
-  改 Dockerfile，否则构建会因缺目录失败。
+- `Dockerfile` 用显式 `COPY` 列出运行期文件（不用 `COPY . .`）：顶层目录或入口文件增删后必须
+  同步这份清单。`utils/` 被删后清单没跟上，构建直接报 `failed to compute cache key: "/utils":
+  not found`——多 COPY 一个不存在的路径也是同一个错。
 - 代码注释与提交信息：注释解释「为什么这样写」（项目里注释密度高且都是这类内容），
   提交信息用英文、conventional commits 格式。
